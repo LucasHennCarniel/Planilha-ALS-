@@ -15,6 +15,10 @@ dist/
 *.xlsx
 !template_manutencao.xlsx
 
+# Demo and test files
+demo_manutencao.xlsx
+test_manutencao.xlsx
+
 # IDE
 .vscode/
 .idea/

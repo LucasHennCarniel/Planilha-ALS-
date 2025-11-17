@@ -42,6 +42,21 @@ pip install -r requirements.txt
 python sistema_manutencao.py
 ```
 
+### Executar Demo (sem GUI)
+
+Para ver uma demonstração do sistema funcionando sem interface gráfica:
+
+```bash
+python demo.py
+```
+
+Este script demonstra:
+- Criação automática do banco de dados
+- Adição de registros
+- Busca e filtragem
+- Atualização de registros
+- Geração de estatísticas
+
 ### Criar Template Excel (Opcional)
 
 Se desejar criar um arquivo Excel de exemplo com dados de demonstração:
@@ -127,6 +142,8 @@ A planilha `manutencao_frota.xlsx` é criada automaticamente na primeira execuç
 Planilha-ALS-/
 ├── sistema_manutencao.py       # Aplicação principal
 ├── create_template.py          # Gerador de template Excel
+├── demo.py                     # Script de demonstração (sem GUI)
+├── test_sistema.py             # Testes unitários
 ├── requirements.txt            # Dependências Python
 ├── README.md                   # Este arquivo
 ├── MANUAL.md                   # Manual do usuário
