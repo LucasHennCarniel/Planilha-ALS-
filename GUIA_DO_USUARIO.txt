@@ -6,7 +6,9 @@
  O QUE VOCÊ RECEBEU:
 
  Uma pasta com estes arquivos:
-   ├── SistemaManutencaoALS.exe  ⭐ O programa (clique neste!)
+   ├── SistemaManutencaoALS/     ⭐ Pasta do programa
+   │   ├── SistemaManutencaoALS.exe  (execute este!)
+   │   └── _internal/             (arquivos necessários)
    └── data/                      (sua planilha está aqui)
 
 
@@ -15,6 +17,7 @@
 ═══════════════════════════════════════════════════════════════
 
 1️⃣ ABRIR O SISTEMA
+   → Entre na pasta: SistemaManutencaoALS
    → Dê duplo clique em: SistemaManutencaoALS.exe
    → Aguarde alguns segundos para abrir
    →  Pronto! A tela principal aparecerá
@@ -136,7 +139,8 @@ A barra superior mostra:
 ═══════════════════════════════════════════════════════════════
 
  "Programa não abre"
-   → Verifique se a pasta 'data' está junto com o .exe
+   → Verifique se a pasta '_internal' está junto com o .exe
+   → Verifique se a pasta 'data' está na mesma pasta raiz
    → Tente executar como Administrador (botão direito)
 
 
@@ -155,7 +159,9 @@ A barra superior mostra:
 ═══════════════════════════════════════════════════════════════
 
  Pasta Principal/
-   ├── SistemaManutencaoALS.exe    ⭐ Execute este
+   ├── SistemaManutencaoALS/        ⭐ Pasta do programa
+   │   ├── SistemaManutencaoALS.exe    (execute este)
+   │   └── _internal/               (NÃO MOVA/DELETE!)
    ├── data/                        (planilha principal)
    ├── backup/                      (cópias de segurança)
    └── output/                      (relatórios)

@@ -54,14 +54,17 @@ class DatabaseManager:
                 # Limpa dados
                 self.df = self.df.fillna('')
                 
-                print(f"✅ Dados carregados: {len(self.df)} registros")
+                # *** FILTRO IMPORTANTE: Remove registros sem PLACA (linhas vazias) ***
+                self.df = self.df[self.df['PLACA'].astype(str).str.strip() != '']
+                
+                # Reset do índice após filtrar
+                self.df = self.df.reset_index(drop=True)
+                
             else:
                 # Cria DataFrame vazio com colunas obrigatórias
                 self.df = pd.DataFrame(columns=self.colunas_obrigatorias)
-                print("⚠️ Arquivo não encontrado. Criando novo banco de dados.")
                 
         except Exception as e:
-            print(f"❌ Erro ao carregar dados: {e}")
             # Cria DataFrame vazio em caso de erro
             self.df = pd.DataFrame(columns=self.colunas_obrigatorias)
     
@@ -77,18 +80,15 @@ class DatabaseManager:
                 backup_file = f'backup/backup_{timestamp}.xlsx'
                 import shutil
                 shutil.copy2(self.arquivo, backup_file)
-                print(f"💾 Backup criado: {backup_file}")
             
             # Recalcula campos automáticos antes de salvar
             self.recalcular_campos()
             
             # Salva o arquivo
             self.df.to_excel(self.arquivo, index=False, sheet_name='PROGRAMAÇÃO')
-            print(f"✅ Dados salvos com sucesso!")
             return True
             
         except Exception as e:
-            print(f"❌ Erro ao salvar dados: {e}")
             return False
     
     
@@ -129,11 +129,9 @@ class DatabaseManager:
             # Adiciona ao DataFrame principal
             self.df = pd.concat([self.df, novo_registro], ignore_index=True)
             
-            print("✅ Registro adicionado")
             return True
             
         except Exception as e:
-            print(f"❌ Erro ao adicionar registro: {e}")
             return False
     
     
@@ -146,11 +144,9 @@ class DatabaseManager:
                 if chave in self.df.columns:
                     self.df.at[indice, chave] = valor
             
-            print("✅ Registro atualizado")
             return True
             
         except Exception as e:
-            print(f"❌ Erro ao atualizar registro: {e}")
             return False
     
     
@@ -160,11 +156,9 @@ class DatabaseManager:
         """
         try:
             self.df = self.df.drop(indice).reset_index(drop=True)
-            print("✅ Registro excluído")
             return True
             
         except Exception as e:
-            print(f"❌ Erro ao excluir registro: {e}")
             return False
     
     

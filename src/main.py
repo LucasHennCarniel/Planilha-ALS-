@@ -8,6 +8,7 @@ from datetime import datetime
 import pandas as pd
 import os
 import sys
+from PIL import Image, ImageTk
 
 # Adiciona o diretório pai ao path (necessário para importações)
 if getattr(sys, 'frozen', False):
@@ -19,7 +20,10 @@ else:
 sys.path.insert(0, application_path)
 
 from src.database import DatabaseManager
-from src.utils import formatar_data_br, validar_data, validar_numero, limpar_texto
+from src.utils import formatar_data_br, validar_data, validar_numero, limpar_texto, gerar_relatorio_pdf, gerar_relatorio_word
+from src.veiculos import GerenciadorVeiculos
+from src.interface_veiculos import JanelaCadastroVeiculos
+from src.destinos import GerenciadorDestinos
 
 
 class FormularioRegistro(tk.Toplevel):
@@ -27,10 +31,12 @@ class FormularioRegistro(tk.Toplevel):
     Formulário para adicionar/editar registros
     """
     
-    def __init__(self, parent, db, registro=None, callback=None):
+    def __init__(self, parent, db, gerenciador_veiculos, gerenciador_destinos, registro=None, callback=None):
         super().__init__(parent)
         
         self.db = db
+        self.gerenciador_veiculos = gerenciador_veiculos
+        self.gerenciador_destinos = gerenciador_destinos
         self.registro = registro
         self.callback = callback
         self.resultado = None
@@ -70,25 +76,58 @@ class FormularioRegistro(tk.Toplevel):
         # Dicionário para armazenar widgets
         self.campos = {}
         
+        # Campo especial de seleção de veículo (no topo)
+        row = 1
+        
+        # Seletor de Veículo Cadastrado
+        ttk.Label(
+            main_frame,
+            text="🚛 Selecionar Veículo:",
+            font=('Arial', 10, 'bold')
+        ).grid(row=row, column=0, sticky=tk.W, pady=5)
+        
+        frame_veiculo = ttk.Frame(main_frame)
+        frame_veiculo.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+        
+        self.combo_veiculo_cadastrado = ttk.Combobox(
+            frame_veiculo,
+            width=35,
+            values=self.gerenciador_veiculos.obter_veiculos_ativos(),
+            state='readonly'
+        )
+        self.combo_veiculo_cadastrado.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.combo_veiculo_cadastrado.bind('<<ComboboxSelected>>', self.ao_selecionar_veiculo)
+        
+        ttk.Button(
+            frame_veiculo,
+            text="📋",
+            width=3,
+            command=self.abrir_cadastro_veiculos
+        ).pack(side=tk.LEFT, padx=(5, 0))
+        
+        row += 1
+        
+        # Separador
+        ttk.Separator(main_frame, orient='horizontal').grid(
+            row=row, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10
+        )
+        row += 1
+        
         # Define campos do formulário
         campos_config = [
             ('DATA', 'Data:', 'entry'),
-            ('PLACA', 'Placa:', 'entry'),
+            ('PLACA', 'Placa:', 'entry_readonly'),
             ('KM', 'KM:', 'entry'),
-            ('VEÍCULO', 'Veículo:', 'combo', ['CAVALO', 'CARRETA 1', 'CARRETA 2', 'BUG 1', 'BUG 2', 'LS']),
-            ('DESTINO PROGRAMADO', 'Destino Programado:', 'combo', [
-                'AGYLE', 'BOM SUCESSO', 'M&S', 'DAF BARIGUI', 'PAULISTA FREIOS',
-                'KREUSCH', 'CAMINHALTO', 'OUTROS'
-            ]),
+            ('VEÍCULO', 'Tipo:', 'entry_readonly'),
+            ('DESTINO PROGRAMADO', 'Destino Programado:', 'combo_com_adicionar'),
             ('SERVIÇO A EXECUTAR', 'Serviço a Executar:', 'text'),
             ('STATUS', 'Status:', 'combo', ['EM SERVIÇO', 'FINALIZADO']),
             ('DATA ENTRADA', 'Data Entrada:', 'entry'),
             ('DATA SAÍDA', 'Data Saída:', 'entry'),
-            ('NR° OF', 'Nº Oficina:', 'entry'),
+            ('NR° OF', 'NRº OF:', 'entry'),
             ('OBS', 'Observações:', 'text'),
         ]
         
-        row = 1
         for campo_config in campos_config:
             campo_nome = campo_config[0]
             campo_label = campo_config[1]
@@ -105,6 +144,29 @@ class FormularioRegistro(tk.Toplevel):
             if campo_tipo == 'entry':
                 widget = ttk.Entry(main_frame, width=40)
                 widget.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+            
+            elif campo_tipo == 'entry_readonly':
+                widget = ttk.Entry(main_frame, width=40, state='readonly')
+                widget.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+            
+            elif campo_tipo == 'combo_com_adicionar':
+                # Frame especial para destino com botão [+]
+                frame_destino = ttk.Frame(main_frame)
+                frame_destino.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+                
+                widget = ttk.Combobox(
+                    frame_destino,
+                    width=35,
+                    values=self.gerenciador_destinos.obter_destinos_ativos()
+                )
+                widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                
+                ttk.Button(
+                    frame_destino,
+                    text="[+]",
+                    width=4,
+                    command=self.adicionar_novo_destino
+                ).pack(side=tk.LEFT, padx=(5, 0))
                 
             elif campo_tipo == 'combo':
                 valores = campo_config[3] if len(campo_config) > 3 else []
@@ -131,14 +193,14 @@ class FormularioRegistro(tk.Toplevel):
         
         ttk.Button(
             frame_botoes,
-            text="[Save] Salvar",
+            text="💾  Salvar",
             command=self.salvar,
             width=15
         ).pack(side=tk.LEFT, padx=5)
         
         ttk.Button(
             frame_botoes,
-            text="[X] Cancelar",
+            text="❌  Cancelar",
             command=self.cancelar,
             width=15
         ).pack(side=tk.LEFT, padx=5)
@@ -146,10 +208,138 @@ class FormularioRegistro(tk.Toplevel):
         # Info sobre cálculos automáticos
         ttk.Label(
             main_frame,
-            text="ℹ️ Status e Dias em Manutenção são calculados automaticamente",
+            text="ℹ️ Dica: Selecione um veículo cadastrado ou preencha manualmente. Status e Dias em Manutenção são calculados automaticamente.",
             font=('Arial', 8, 'italic'),
             foreground='gray'
         ).grid(row=row+1, column=0, columnspan=2, pady=10)
+    
+    
+    def ao_selecionar_veiculo(self, event=None):
+        """
+        Quando um veículo cadastrado é selecionado, preenche dados automaticamente
+        """
+        selecao = self.combo_veiculo_cadastrado.get()
+        if not selecao:
+            return
+        
+        # Extrai placa da seleção
+        placa = self.gerenciador_veiculos.extrair_placa_da_selecao(selecao)
+        
+        # Busca dados do veículo
+        veiculo = self.gerenciador_veiculos.obter_veiculo_por_placa(placa)
+        
+        if veiculo:
+            # Preenche PLACA (readonly)
+            self.campos['PLACA'].config(state='normal')
+            self.campos['PLACA'].delete(0, tk.END)
+            self.campos['PLACA'].insert(0, veiculo['PLACA'])
+            self.campos['PLACA'].config(state='readonly')
+            
+            # Preenche VEÍCULO/Tipo (readonly)
+            self.campos['VEÍCULO'].config(state='normal')
+            self.campos['VEÍCULO'].delete(0, tk.END)
+            self.campos['VEÍCULO'].insert(0, veiculo['TIPO_VEICULO'])
+            self.campos['VEÍCULO'].config(state='readonly')
+            
+            # Preenche KM com última KM registrada
+            self.campos['KM'].delete(0, tk.END)
+            ultima_km = veiculo.get('ULTIMA_KM', 0)
+            self.campos['KM'].insert(0, str(ultima_km))
+            
+            # Foca no próximo campo
+            self.campos['KM'].focus()
+    
+    
+    def adicionar_novo_destino(self):
+        """
+        Abre pop-up para adicionar novo destino
+        """
+        # Cria janela pop-up
+        dialog = tk.Toplevel(self)
+        dialog.title("Adicionar Novo Destino")
+        dialog.geometry("400x180")
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Centraliza
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (200)
+        y = (dialog.winfo_screenheight() // 2) - (90)
+        dialog.geometry(f"400x180+{x}+{y}")
+        
+        # Frame principal
+        frame = ttk.Frame(dialog, padding="20")
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Título
+        ttk.Label(
+            frame,
+            text="📍 Cadastrar Novo Destino",
+            font=('Arial', 12, 'bold')
+        ).pack(pady=(0, 15))
+        
+        # Label e entrada
+        ttk.Label(
+            frame,
+            text="Nome do Destino:",
+            font=('Arial', 10)
+        ).pack(anchor=tk.W, pady=(0, 5))
+        
+        entry_destino = ttk.Entry(frame, width=40, font=('Arial', 10))
+        entry_destino.pack(fill=tk.X, pady=(0, 15))
+        entry_destino.focus()
+        
+        # Frame de botões
+        frame_botoes = ttk.Frame(frame)
+        frame_botoes.pack()
+        
+        def salvar():
+            nome = entry_destino.get().strip()
+            if not nome:
+                messagebox.showwarning("Aviso", "Digite o nome do destino!", parent=dialog)
+                return
+            
+            sucesso, mensagem = self.gerenciador_destinos.adicionar_destino(nome)
+            
+            if sucesso:
+                # Atualiza lista no combobox
+                self.campos['DESTINO PROGRAMADO']['values'] = self.gerenciador_destinos.obter_destinos_ativos()
+                # Seleciona o novo destino
+                self.campos['DESTINO PROGRAMADO'].set(nome.upper())
+                messagebox.showinfo("Sucesso", mensagem, parent=dialog)
+                dialog.destroy()
+            else:
+                messagebox.showerror("Erro", mensagem, parent=dialog)
+        
+        def cancelar():
+            dialog.destroy()
+        
+        # Bind Enter para salvar
+        entry_destino.bind('<Return>', lambda e: salvar())
+        
+        ttk.Button(
+            frame_botoes,
+            text="💾  Salvar",
+            command=salvar,
+            width=15
+        ).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(
+            frame_botoes,
+            text="❌  Cancelar",
+            command=cancelar,
+            width=15
+        ).pack(side=tk.LEFT, padx=5)
+    
+    
+    def abrir_cadastro_veiculos(self):
+        """
+        Abre janela de cadastro de veículos
+        """
+        JanelaCadastroVeiculos(self, self.gerenciador_veiculos)
+        
+        # Atualiza lista após fechar cadastro
+        self.combo_veiculo_cadastrado['values'] = self.gerenciador_veiculos.obter_veiculos_ativos()
     
     
     def preencher_dados(self, registro):
@@ -240,6 +430,15 @@ class FormularioRegistro(tk.Toplevel):
             dados.get('STATUS', '')
         )
         
+        # Atualiza KM do veículo no cadastro
+        if dados.get('PLACA') and dados.get('KM'):
+            try:
+                km = float(dados.get('KM', 0))
+                self.gerenciador_veiculos.atualizar_km(dados['PLACA'], km)
+                self.gerenciador_veiculos.salvar_dados()
+            except:
+                pass  # Se não conseguir atualizar, continua normalmente
+        
         self.resultado = dados
         
         if self.callback:
@@ -276,8 +475,32 @@ class SistemaManutencao:
             )
             sys.exit(1)
         
+        # Inicializa gerenciador de veículos
+        try:
+            self.gerenciador_veiculos = GerenciadorVeiculos()
+        except Exception as e:
+            messagebox.showerror(
+                "Erro ao Inicializar",
+                f"Não foi possível carregar o cadastro de veículos:\n{e}"
+            )
+            self.gerenciador_veiculos = GerenciadorVeiculos()  # Cria novo vazio
+        
+        # Inicializa gerenciador de destinos
+        try:
+            self.gerenciador_destinos = GerenciadorDestinos()
+        except Exception as e:
+            messagebox.showerror(
+                "Erro ao Inicializar",
+                f"Não foi possível carregar o cadastro de destinos:\n{e}"
+            )
+            self.gerenciador_destinos = GerenciadorDestinos()  # Cria novo vazio
+        
         # Variável para índice selecionado
         self.indice_selecionado = None
+        
+        # Controle de ordenação das colunas
+        self.ordem_colunas = {}  # Armazena estado de ordenação de cada coluna
+        self.df_original = None  # Guarda ordem original dos dados
         
         # Configura estilo
         self.configurar_estilo()
@@ -302,7 +525,8 @@ class SistemaManutencao:
         style = ttk.Style()
         style.theme_use('clam')
         
-        style.configure('TButton', padding=5, font=('Arial', 10))
+        # Aumenta fonte dos botões para emojis ficarem maiores e mais visíveis
+        style.configure('TButton', padding=6, font=('Segoe UI Emoji', 11))
         style.configure('TLabel', font=('Arial', 10))
         style.configure('Header.TLabel', font=('Arial', 14, 'bold'))
         style.configure('Treeview', rowheight=25, font=('Arial', 9))
@@ -317,11 +541,42 @@ class SistemaManutencao:
         frame_topo = ttk.Frame(self.root, padding="10")
         frame_topo.pack(fill=tk.X)
         
+        # Frame para logo e título
+        frame_header = ttk.Frame(frame_topo)
+        frame_header.pack(fill=tk.X, pady=(0, 10))
+        
+        # Logo ALS à esquerda
+        try:
+            # Determina caminho da logo
+            if getattr(sys, 'frozen', False):
+                logo_path = os.path.join(sys._MEIPASS, 'img', 'logo ALS.png')
+            else:
+                logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'img', 'logo ALS.png')
+            
+            # Carrega e redimensiona logo
+            logo_original = Image.open(logo_path)
+            # Redimensiona mantendo proporção
+            altura_nova = 80
+            proporcao = altura_nova / logo_original.height
+            largura_nova = int(logo_original.width * proporcao)
+            logo_redimensionada = logo_original.resize((largura_nova, altura_nova), Image.Resampling.LANCZOS)
+            
+            self.logo_photo = ImageTk.PhotoImage(logo_redimensionada)
+            
+            logo_label = ttk.Label(frame_header, image=self.logo_photo)
+            logo_label.pack(side=tk.LEFT, padx=(0, 20))
+        except Exception as e:
+            print(f"Aviso: Não foi possível carregar logo: {e}")
+        
+        # Título à direita da logo
+        titulo_frame = ttk.Frame(frame_header)
+        titulo_frame.pack(side=tk.LEFT, fill=tk.Y, expand=True)
+        
         ttk.Label(
-            frame_topo,
+            titulo_frame,
             text="SISTEMA DE GESTÃO DE MANUTENÇÃO - ALS",
             style='Header.TLabel'
-        ).pack()
+        ).pack(anchor=tk.W, pady=(25, 0))
         
         # Estatísticas
         self.frame_stats = ttk.Frame(frame_topo)
@@ -353,20 +608,21 @@ class SistemaManutencao:
         )
         self.filtro_status.pack(side=tk.LEFT, padx=5)
         
-        ttk.Button(filtro_linha, text="[Search] Buscar", command=self.aplicar_filtros).pack(side=tk.LEFT, padx=5)
-        ttk.Button(filtro_linha, text="[Clear] Limpar", command=self.limpar_filtros).pack(side=tk.LEFT, padx=5)
+        ttk.Button(filtro_linha, text="🔍  Buscar", command=self.aplicar_filtros).pack(side=tk.LEFT, padx=5)
+        ttk.Button(filtro_linha, text="🧹  Limpar", command=self.limpar_filtros).pack(side=tk.LEFT, padx=5)
         
         # ==== FRAME AÇÕES ====
         frame_acoes = ttk.Frame(self.root, padding="10")
         frame_acoes.pack(fill=tk.X)
         
-        ttk.Button(frame_acoes, text="[+] Novo Registro", command=self.novo_registro).pack(side=tk.LEFT, padx=5)
-        ttk.Button(frame_acoes, text="[Edit] Editar", command=self.editar_registro).pack(side=tk.LEFT, padx=5)
-        ttk.Button(frame_acoes, text="[Del] Excluir", command=self.excluir_registro).pack(side=tk.LEFT, padx=5)
-        ttk.Button(frame_acoes, text="[Save] Salvar", command=self.salvar_dados).pack(side=tk.LEFT, padx=5)
-        ttk.Button(frame_acoes, text="[Refresh] Atualizar", command=self.atualizar_tabela).pack(side=tk.LEFT, padx=5)
-        ttk.Button(frame_acoes, text="[Report] Relatório", command=self.gerar_relatorio).pack(side=tk.LEFT, padx=5)
-        ttk.Button(frame_acoes, text="[Export] Exportar", command=self.exportar_excel).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_acoes, text="➕  Novo Registro", command=self.novo_registro).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_acoes, text="✏️  Editar", command=self.editar_registro).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_acoes, text="🗑️  Excluir", command=self.excluir_registro).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_acoes, text="💾  Salvar", command=self.salvar_dados).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_acoes, text="🔄  Atualizar", command=self.atualizar_tabela).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_acoes, text="🚛  Veículos", command=self.gerenciar_veiculos).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_acoes, text="📊  Relatório", command=self.gerar_relatorio).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_acoes, text="📤  Exportar", command=self.exportar_excel).pack(side=tk.LEFT, padx=5)
         
         # ==== FRAME TABELA ====
         frame_tabela = ttk.Frame(self.root, padding="10")
@@ -402,7 +658,12 @@ class SistemaManutencao:
         
         for col in colunas:
             self.tree.column(col, width=larguras.get(col, 100), anchor=tk.W)
-            self.tree.heading(col, text=col, anchor=tk.W)
+            self.tree.heading(
+                col, 
+                text=col, 
+                anchor=tk.W,
+                command=lambda c=col: self.ordenar_por_coluna(c)
+            )
         
         self.tree.bind('<Double-1>', lambda e: self.editar_registro())
         self.tree.bind('<<TreeviewSelect>>', self.on_selecionar)
@@ -414,7 +675,7 @@ class SistemaManutencao:
         # ==== STATUS BAR ====
         self.label_status = ttk.Label(
             self.root,
-            text="[OK] Sistema pronto",
+            text="✅  Sistema pronto",
             relief=tk.SUNKEN,
             anchor=tk.W
         )
@@ -431,6 +692,102 @@ class SistemaManutencao:
             self.indice_selecionado = item['tags'][0] if item['tags'] else None
     
     
+    def ordenar_por_coluna(self, coluna):
+        """
+        Ordena tabela clicando no cabeçalho da coluna
+        Estados: None (original) -> 'asc' (crescente) -> 'desc' (decrescente) -> None (volta ao original)
+        """
+        # Guarda DataFrame original na primeira ordenação
+        if self.df_original is None:
+            self.df_original = self.db.df.copy()
+        
+        # Verifica estado atual da coluna
+        estado_atual = self.ordem_colunas.get(coluna, None)
+        
+        # Mapeia coluna visual para coluna do DataFrame
+        mapa_colunas = {
+            'DATA': 'DATA',
+            'PLACA': 'PLACA',
+            'KM': 'KM',
+            'VEÍCULO': 'VEÍCULO',
+            'DESTINO PROGRAMADO': 'DESTINO PROGRAMADO',
+            'SERVIÇO A EXECUTAR': 'SERVIÇO A EXECUTAR',
+            'STATUS': 'STATUS',
+            'DATA ENTRADA': 'DATA ENTRADA',
+            'DATA SAÍDA': 'DATA SAÍDA',
+            'DIAS': 'TOTAL DE DIAS EM MANUTENÇÃO',
+            'NR° OF': 'NR° OF',
+            'OBS': 'OBS'
+        }
+        
+        coluna_df = mapa_colunas.get(coluna, coluna)
+        
+        # Define próximo estado
+        if estado_atual is None:
+            # Primeira vez: ordena crescente
+            novo_estado = 'asc'
+            df_ordenado = self.db.df.copy()
+            
+            # Tratamento especial para datas
+            if coluna in ['DATA', 'DATA ENTRADA', 'DATA SAÍDA']:
+                df_ordenado[coluna_df] = pd.to_datetime(df_ordenado[coluna_df], format='%d/%m/%Y', errors='coerce')
+                df_ordenado = df_ordenado.sort_values(by=coluna_df, ascending=True, na_position='last')
+            # Tratamento especial para números
+            elif coluna in ['KM', 'DIAS']:
+                df_ordenado[coluna_df] = pd.to_numeric(df_ordenado[coluna_df], errors='coerce')
+                df_ordenado = df_ordenado.sort_values(by=coluna_df, ascending=True, na_position='last')
+            # Ordenação alfabética para texto
+            else:
+                df_ordenado = df_ordenado.sort_values(by=coluna_df, ascending=True, na_position='last')
+            
+            # Atualiza indicador visual no cabeçalho
+            self.tree.heading(coluna, text=f"{coluna} ▲")
+            
+        elif estado_atual == 'asc':
+            # Segunda vez: ordena decrescente
+            novo_estado = 'desc'
+            df_ordenado = self.db.df.copy()
+            
+            # Tratamento especial para datas
+            if coluna in ['DATA', 'DATA ENTRADA', 'DATA SAÍDA']:
+                df_ordenado[coluna_df] = pd.to_datetime(df_ordenado[coluna_df], format='%d/%m/%Y', errors='coerce')
+                df_ordenado = df_ordenado.sort_values(by=coluna_df, ascending=False, na_position='last')
+            # Tratamento especial para números
+            elif coluna in ['KM', 'DIAS']:
+                df_ordenado[coluna_df] = pd.to_numeric(df_ordenado[coluna_df], errors='coerce')
+                df_ordenado = df_ordenado.sort_values(by=coluna_df, ascending=False, na_position='last')
+            # Ordenação alfabética para texto
+            else:
+                df_ordenado = df_ordenado.sort_values(by=coluna_df, ascending=False, na_position='last')
+            
+            # Atualiza indicador visual no cabeçalho
+            self.tree.heading(coluna, text=f"{coluna} ▼")
+            
+        else:  # estado_atual == 'desc'
+            # Terceira vez: volta à ordem original
+            novo_estado = None
+            df_ordenado = self.df_original.copy()
+            
+            # Remove indicador visual do cabeçalho
+            self.tree.heading(coluna, text=coluna)
+        
+        # Atualiza estado da coluna
+        self.ordem_colunas[coluna] = novo_estado
+        
+        # Remove indicadores de outras colunas
+        colunas_visiveis = ['DATA', 'PLACA', 'KM', 'VEÍCULO', 'DESTINO PROGRAMADO',
+                           'SERVIÇO A EXECUTAR', 'STATUS', 'DATA ENTRADA', 'DATA SAÍDA',
+                           'DIAS', 'NR° OF', 'OBS']
+        for outra_col in colunas_visiveis:
+            if outra_col != coluna and self.ordem_colunas.get(outra_col) is not None:
+                self.ordem_colunas[outra_col] = None
+                self.tree.heading(outra_col, text=outra_col)
+        
+        # Atualiza a exibição com DataFrame ordenado
+        self.db.df = df_ordenado.reset_index(drop=True)
+        self.atualizar_tabela()
+    
+    
     def atualizar_tabela(self, df=None):
         """
         Atualiza dados na tabela
@@ -442,6 +799,9 @@ class SistemaManutencao:
         # Usa DataFrame fornecido ou completo
         if df is None:
             df = self.db.obter_dataframe_exibicao()
+            # Salva ordem original na primeira vez
+            if self.df_original is None:
+                self.df_original = self.db.df.copy()
         
         # Popula tabela
         for idx, row in df.iterrows():
@@ -469,7 +829,7 @@ class SistemaManutencao:
         self.tree.tag_configure('em_servico', background='#fff3cd')
         self.tree.tag_configure('finalizado', background='#d1e7dd')
         
-        self.label_status.config(text=f" {len(df)} registros carregados")
+        self.label_status.config(text=f"📋  {len(df)} registros carregados")
     
     
     def atualizar_estatisticas(self):
@@ -478,11 +838,11 @@ class SistemaManutencao:
         """
         stats = self.db.obter_estatisticas()
         
-        texto = f" Total: {stats['total_registros']} | "
-        texto += f" Em Serviço: {stats['em_servico']} | "
-        texto += f" Finalizados: {stats['finalizados']} | "
-        texto += f"⏱️ Tempo Médio: {stats['tempo_medio']:.1f} dias | "
-        texto += f" Placas: {stats['placas_unicas']}"
+        texto = f"📊  Total: {stats['total_registros']}  |  "
+        texto += f"🔧  Em Serviço: {stats['em_servico']}  |  "
+        texto += f"✅  Finalizados: {stats['finalizados']}  |  "
+        texto += f"⏱️  Tempo Médio: {stats['tempo_medio']:.1f} dias  |  "
+        texto += f"🚗  Placas: {stats['placas_unicas']}"
         
         self.label_stats.config(text=texto)
     
@@ -504,7 +864,7 @@ class SistemaManutencao:
         
         df_filtrado = self.db.buscar_registros(filtros)
         self.atualizar_tabela(df_filtrado)
-        self.label_status.config(text=f" {len(df_filtrado)} registros encontrados")
+        self.label_status.config(text=f"🔍  {len(df_filtrado)} registros encontrados")
     
     
     def limpar_filtros(self):
@@ -527,7 +887,7 @@ class SistemaManutencao:
                 self.atualizar_estatisticas()
                 messagebox.showinfo("Sucesso", "Registro adicionado com sucesso!")
         
-        FormularioRegistro(self.root, self.db, callback=callback)
+        FormularioRegistro(self.root, self.db, self.gerenciador_veiculos, self.gerenciador_destinos, callback=callback)
     
     
     def editar_registro(self):
@@ -546,7 +906,7 @@ class SistemaManutencao:
                 self.atualizar_estatisticas()
                 messagebox.showinfo("Sucesso", "Registro atualizado com sucesso!")
         
-        FormularioRegistro(self.root, self.db, registro=registro, callback=callback)
+        FormularioRegistro(self.root, self.db, self.gerenciador_veiculos, self.gerenciador_destinos, registro=registro, callback=callback)
     
     
     def excluir_registro(self):
@@ -579,6 +939,13 @@ class SistemaManutencao:
             messagebox.showinfo("Sucesso", "Dados salvos com sucesso!\n\nBackup criado na pasta 'backup'")
         else:
             messagebox.showerror("Erro", "Não foi possível salvar os dados")
+    
+    
+    def gerenciar_veiculos(self):
+        """
+        Abre janela de gerenciamento de veículos
+        """
+        JanelaCadastroVeiculos(self.root, self.gerenciador_veiculos)
     
     
     def gerar_relatorio(self):

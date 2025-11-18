@@ -108,6 +108,9 @@ def gerar_relatorio_pdf(dados, estatisticas, arquivo_saida):
     Gera relatório em PDF
     """
     try:
+        # Criar pasta output se não existir
+        os.makedirs(os.path.dirname(arquivo_saida), exist_ok=True)
+        
         from reportlab.lib.pagesizes import A4, landscape
         from reportlab.lib import colors
         from reportlab.lib.units import cm
@@ -207,6 +210,9 @@ def gerar_relatorio_word(dados, estatisticas, arquivo_saida):
     Gera relatório em Word (.docx)
     """
     try:
+        # Criar pasta output se não existir
+        os.makedirs(os.path.dirname(arquivo_saida), exist_ok=True)
+        
         from docx import Document
         from docx.shared import Inches, Pt, RGBColor
         from docx.enum.text import WD_ALIGN_PARAGRAPH

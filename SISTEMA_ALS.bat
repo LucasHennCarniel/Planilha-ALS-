@@ -366,33 +366,38 @@ if exist "*.spec" del /q *.spec
 echo  Limpeza concluída
 echo.
 
-echo [3/4] Criando executável standalone (arquivo único)...
+echo [3/4] Criando executável standalone...
 echo (Este é o passo mais demorado, aguarde 5-15 minutos...)
 echo.
-echo [INFO] Empacotando TUDO em um único .exe:
+echo [INFO] Empacotando TUDO no executável:
 echo   - Código Python completo
 echo   - Todas as bibliotecas (pandas, openpyxl, tkinter...)
 echo   - Interface gráfica
 echo   - Python Runtime embutido
 echo.
 
-pyinstaller --noconfirm ^
-    --onefile ^
+python -m PyInstaller --noconfirm ^
     --windowed ^
     --name "SistemaManutencaoALS" ^
     --icon=NONE ^
     --clean ^
+    --noupx ^
+    --add-data "img;img" ^
     --hidden-import=pandas ^
     --hidden-import=openpyxl ^
     --hidden-import=tkinter ^
     --hidden-import=tkcalendar ^
     --hidden-import=PIL ^
     --hidden-import=PIL._tkinter_finder ^
+    --hidden-import=docx ^
+    --hidden-import=reportlab ^
     --collect-all=pandas ^
     --collect-all=openpyxl ^
     --collect-all=tkcalendar ^
     --collect-all=PIL ^
     --collect-submodules=tkinter ^
+    --collect-submodules=reportlab ^
+    --collect-submodules=docx ^
     src\main.py
 
 if errorlevel 1 (
@@ -411,51 +416,48 @@ if errorlevel 1 (
 echo.
 echo [4/4] Verificando resultado...
 
-if exist "dist\SistemaManutencaoALS.exe" (
+if exist "dist\SistemaManutencaoALS\SistemaManutencaoALS.exe" (
     echo [OK] Executável criado com sucesso!
     echo.
     echo ╔════════════════════════════════════════════════════════════╗
-    echo ║         EXECUTÁVEL STANDALONE CRIADO!                    ║
+    echo ║         EXECUTÁVEL CRIADO COM SUCESSO!                   ║
     echo ╚════════════════════════════════════════════════════════════╝
     echo.
-    echo [INFO] Arquivo criado em:
-    echo    dist\SistemaManutencaoALS.exe
+    echo [INFO] Pasta criada em:
+    echo    dist\SistemaManutencaoALS\
     echo.
-    echo [INFO] Este é um arquivo ÚNICO e STANDALONE contendo:
-    echo    ✓ Python completo embutido
-    echo    ✓ Todas as bibliotecas (pandas, openpyxl, tkinter...)
-    echo    ✓ Todo o código da aplicação
-    echo    ✓ Interface gráfica completa
+    echo [INFO] Conteúdo (COPIE TODA ESTA PASTA):
+    echo    ✓ SistemaManutencaoALS.exe (executável principal)
+    echo    ✓ Arquivos de suporte (_internal/)
+    echo    ✓ Python e bibliotecas embutidos
     echo.
     echo ╔════════════════════════════════════════════════════════════╗
     echo ║         COMO ENVIAR PARA SEU PAI                         ║
     echo ╚════════════════════════════════════════════════════════════╝
     echo.
-    echo OPÇÃO 1 - APENAS O .EXE (mais simples):
+    echo IMPORTANTE: COPIE A PASTA COMPLETA!
     echo ───────────────────────────────────────────────────────────
-    echo   Envie: dist\SistemaManutencaoALS.exe
-    echo   Sistema cria planilha vazia automaticamente
     echo.
-    echo OPÇÃO 2 - .EXE + PLANILHA (recomendado):
-    echo ───────────────────────────────────────────────────────────
-    echo   Copie:
-    echo     - dist\SistemaManutencaoALS.exe
-    echo     - data\PROGRAMAÇÃO MANUTENÇÃO (CÓPIA 2).xlsx
+    echo 1. Copie TODA a pasta: dist\SistemaManutencaoALS\
+    echo 2. Copie também: data\ (com a planilha)
     echo.
-    echo   Na máquina dele:
-    echo     Pasta qualquer\
-    echo     ├── SistemaManutencaoALS.exe
-    echo     └── data\
-    echo         └── planilha.xlsx
+    echo Na máquina dele, estrutura final:
+    echo   Sistema ALS\
+    echo   ├── SistemaManutencaoALS\ (PASTA COMPLETA do dist)
+    echo   │   ├── SistemaManutencaoALS.exe
+    echo   │   └── _internal\ (arquivos de suporte)
+    echo   └── data\
+    echo       └── PROGRAMAÇÃO MANUTENÇÃO (CÓPIA 2).xlsx
+    echo.
+    echo 3. Ele executa: SistemaManutencaoALS.exe
     echo.
     echo ╔════════════════════════════════════════════════════════════╗
     echo ║  ELE NÃO PRECISA DE NADA INSTALADO!                     ║
     echo ║    ✗ Python                                              ║
     echo ║    ✗ Bibliotecas                                         ║
     echo ║    ✗ Internet                                            ║
-    echo ║    ✗ Arquivos .bat, .py, src/, etc                       ║
     echo ║                                                            ║
-    echo ║  Apenas duplo clique e funciona!                         ║
+    echo ║  Apenas duplo clique no .exe e funciona!                 ║
     echo ╚════════════════════════════════════════════════════════════╝
     echo.
     
@@ -490,10 +492,10 @@ echo ║            ▶️  EXECUTANDO .EXE STANDALONE                   ║
 echo ╚════════════════════════════════════════════════════════════╝
 echo.
 
-if not exist "dist\SistemaManutencaoALS.exe" (
+if not exist "dist\SistemaManutencaoALS\SistemaManutencaoALS.exe" (
     echo  Executável não encontrado!
     echo.
-    echo O arquivo dist\SistemaManutencaoALS.exe não existe.
+    echo O arquivo dist\SistemaManutencaoALS\SistemaManutencaoALS.exe não existe.
     echo.
     echo Você precisa criar o executável primeiro (opção 2).
     echo.
@@ -507,7 +509,7 @@ echo  Iniciando sistema em modo standalone...
 echo    (Pode demorar 5-15 segundos na primeira execução)
 echo.
 
-start "" "dist\SistemaManutencaoALS.exe"
+start "" "dist\SistemaManutencaoALS\SistemaManutencaoALS.exe"
 
 echo  Sistema iniciado!
 echo.
