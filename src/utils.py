@@ -8,27 +8,36 @@ import os
 
 def calcular_dias_manutencao(data_entrada, data_saida):
     """
-    Calcula dias em manutenção
+    Calcula dias em manutenção (CORRETO: conta o dia de entrada e saída)
     Se data_saida vazia, usa hoje
     """
     if pd.isna(data_entrada) or data_entrada == '' or data_entrada is None:
         return 0
     
     try:
-        data_entrada = pd.to_datetime(data_entrada)
+        # Converte data de entrada para datetime
+        if isinstance(data_entrada, str):
+            data_entrada_dt = pd.to_datetime(data_entrada, format='%d/%m/%Y', dayfirst=True)
+        else:
+            data_entrada_dt = pd.to_datetime(data_entrada)
     except:
         return 0
     
+    # Define data de saída
     if pd.isna(data_saida) or data_saida == '' or data_saida is None:
-        data_fim = datetime.now()
+        data_saida_dt = pd.Timestamp(datetime.now().date())
     else:
         try:
-            data_fim = pd.to_datetime(data_saida)
+            if isinstance(data_saida, str):
+                data_saida_dt = pd.to_datetime(data_saida, format='%d/%m/%Y', dayfirst=True)
+            else:
+                data_saida_dt = pd.to_datetime(data_saida)
         except:
-            data_fim = datetime.now()
+            data_saida_dt = pd.Timestamp(datetime.now().date())
     
-    dias = (data_fim - data_entrada).days
-    return max(0, dias)
+    # Calcula diferença em dias (adiciona +1 para contar o dia de entrada)
+    dias = (data_saida_dt - data_entrada_dt).days + 1
+    return max(1, dias)  # Mínimo 1 dia (se entrou e saiu no mesmo dia)
 
 
 def calcular_status(data_entrada, data_saida, status_atual=''):

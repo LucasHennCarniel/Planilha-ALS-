@@ -1,4 +1,6 @@
-"""
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+codigo = '''"""
 Gestão de Cadastro de Destinos - SQLite Integrado
 """
 import sqlite3
@@ -162,3 +164,9 @@ class GerenciadorDestinos:
         except Exception as e:
             self.conn.rollback()
             return False, f"Erro: {e}"
+'''
+
+with open('src/destinos.py', 'w', encoding='utf-8') as f:
+    f.write(codigo)
+    
+print("✅ Arquivo destinos.py criado com sucesso!")

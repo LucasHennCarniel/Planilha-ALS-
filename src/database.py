@@ -82,6 +82,22 @@ class DatabaseManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_data ON manutencoes(data)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_status ON manutencoes(status)")
             
+            # Tabela NOTAS (para anotações futuras)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS notas (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    data_programada TEXT NOT NULL,
+                    placa TEXT NOT NULL,
+                    status TEXT,
+                    observacao TEXT,
+                    data_criacao TEXT,
+                    UNIQUE(placa, data_programada)
+                )
+            """)
+            
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_notas_placa ON notas(placa)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_notas_data ON notas(data_programada)")
+            
             self.conn.commit()
             return True
         except Exception as e:

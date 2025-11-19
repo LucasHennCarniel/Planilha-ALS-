@@ -8,6 +8,7 @@ from datetime import datetime
 import pandas as pd
 import os
 import sys
+import sqlite3
 from PIL import Image, ImageTk
 
 # Adiciona o diretório pai ao path (necessário para importações)
@@ -24,7 +25,6 @@ from src.utils import formatar_data_br, validar_data, validar_numero, limpar_tex
 from src.veiculos import GerenciadorVeiculos
 from src.interface_veiculos import JanelaCadastroVeiculos
 from src.destinos import GerenciadorDestinos
-from src.importador import ImportadorDados
 
 
 class FormularioRegistro(tk.Toplevel):
@@ -80,24 +80,52 @@ class FormularioRegistro(tk.Toplevel):
         # Campo especial de seleção de veículo (no topo)
         row = 1
         
-        # Seletor de Veículo Cadastrado
+        # Seletor de Veículo Cadastrado COM BUSCA
         ttk.Label(
             main_frame,
-            text="🚛 Selecionar Veículo:",
+            text="🚛 Buscar Veículo:",
             font=('Arial', 10, 'bold')
         ).grid(row=row, column=0, sticky=tk.W, pady=5)
         
         frame_veiculo = ttk.Frame(main_frame)
         frame_veiculo.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
         
-        self.combo_veiculo_cadastrado = ttk.Combobox(
-            frame_veiculo,
-            width=35,
-            values=self.gerenciador_veiculos.obter_veiculos_ativos(),
-            state='readonly'
+        # Entry com autocomplete (substitui Combobox readonly)
+        self.entry_busca_veiculo = ttk.Entry(frame_veiculo, width=35, font=('Arial', 10))
+        self.entry_busca_veiculo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Listbox flutuante para resultados
+        self.frame_resultados = tk.Frame(main_frame, bg='white', relief=tk.SOLID, borderwidth=1)
+        self.listbox_veiculos = tk.Listbox(
+            self.frame_resultados,
+            height=6,
+            font=('Arial', 9),
+            activestyle='dotbox',
+            relief=tk.FLAT
         )
-        self.combo_veiculo_cadastrado.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.combo_veiculo_cadastrado.bind('<<ComboboxSelected>>', self.ao_selecionar_veiculo)
+        self.listbox_veiculos.pack(fill=tk.BOTH, expand=True)
+        
+        # Scrollbar para listbox
+        scroll_listbox = ttk.Scrollbar(self.frame_resultados, orient=tk.VERTICAL, command=self.listbox_veiculos.yview)
+        scroll_listbox.pack(side=tk.RIGHT, fill=tk.Y)
+        self.listbox_veiculos.config(yscrollcommand=scroll_listbox.set)
+        
+        # Variável para controlar seleção
+        self.veiculo_selecionado = None
+        self.lista_veiculos_completa = []
+        
+        # Binds para autocomplete
+        self.entry_busca_veiculo.bind('<KeyRelease>', self.filtrar_veiculos)
+        self.entry_busca_veiculo.bind('<FocusIn>', lambda e: self.mostrar_resultados())
+        self.entry_busca_veiculo.bind('<FocusOut>', lambda e: self.root.after(200, self.esconder_resultados))
+        self.entry_busca_veiculo.bind('<Down>', lambda e: self.listbox_veiculos.focus_set())
+        self.listbox_veiculos.bind('<Return>', lambda e: self.selecionar_veiculo_lista())
+        self.listbox_veiculos.bind('<Double-Button-1>', lambda e: self.selecionar_veiculo_lista())
+        self.listbox_veiculos.bind('<Up>', lambda e: self.navegar_lista('up'))
+        self.listbox_veiculos.bind('<Down>', lambda e: self.navegar_lista('down'))
+        
+        # Carrega lista inicial
+        self.atualizar_lista_veiculos()
         
         ttk.Button(
             frame_veiculo,
@@ -122,7 +150,7 @@ class FormularioRegistro(tk.Toplevel):
             ('VEÍCULO', 'Tipo:', 'entry_readonly'),
             ('DESTINO PROGRAMADO', 'Destino Programado:', 'combo_com_adicionar'),
             ('SERVIÇO A EXECUTAR', 'Serviço a Executar:', 'text'),
-            ('STATUS', 'Status:', 'combo', ['EM SERVIÇO', 'FINALIZADO']),
+            ('STATUS', 'Status:', 'combo', ['EM TRÂNSITO', 'EM SERVIÇO', 'FINALIZADO']),
             ('DATA ENTRADA', 'Data Entrada:', 'entry'),
             ('DATA SAÍDA', 'Data Saída:', 'entry'),
             ('NR° OF', 'NRº OF:', 'entry'),
@@ -219,7 +247,15 @@ class FormularioRegistro(tk.Toplevel):
         """
         Quando um veículo cadastrado é selecionado, preenche dados automaticamente
         """
-        selecao = self.combo_veiculo_cadastrado.get()
+        # Para compatibilidade com busca antiga
+        if hasattr(self, 'combo_veiculo_cadastrado'):
+            selecao = self.combo_veiculo_cadastrado.get()
+        else:
+            # Nova busca com entry
+            if not self.veiculo_selecionado:
+                return
+            selecao = self.veiculo_selecionado
+        
         if not selecao:
             return
         
@@ -249,6 +285,82 @@ class FormularioRegistro(tk.Toplevel):
             
             # Foca no próximo campo
             self.campos['KM'].focus()
+    
+    
+    def atualizar_lista_veiculos(self):
+        """Atualiza lista completa de veículos no formato PLACA - TIPO"""
+        veiculos = self.gerenciador_veiculos.obter_veiculos_ativos()
+        self.lista_veiculos_completa = veiculos
+        self.listbox_veiculos.delete(0, tk.END)
+        for veiculo in veiculos:
+            self.listbox_veiculos.insert(tk.END, veiculo)
+    
+    
+    def filtrar_veiculos(self, event=None):
+        """Filtra veículos conforme digitação"""
+        termo_busca = self.entry_busca_veiculo.get().upper()
+        
+        # Limpa listbox
+        self.listbox_veiculos.delete(0, tk.END)
+        
+        if not termo_busca:
+            # Mostra todos
+            for veiculo in self.lista_veiculos_completa:
+                self.listbox_veiculos.insert(tk.END, veiculo)
+        else:
+            # Filtra por placa ou tipo
+            for veiculo in self.lista_veiculos_completa:
+                if termo_busca in veiculo.upper():
+                    self.listbox_veiculos.insert(tk.END, veiculo)
+        
+        # Mostra resultados
+        if self.listbox_veiculos.size() > 0:
+            self.mostrar_resultados()
+    
+    
+    def mostrar_resultados(self):
+        """Mostra listbox de resultados"""
+        if self.listbox_veiculos.size() > 0:
+            self.frame_resultados.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=5)
+    
+    
+    def esconder_resultados(self):
+        """Esconde listbox de resultados"""
+        self.frame_resultados.grid_forget()
+    
+    
+    def selecionar_veiculo_lista(self):
+        """Seleciona veículo da listbox"""
+        selecao = self.listbox_veiculos.curselection()
+        if selecao:
+            veiculo_texto = self.listbox_veiculos.get(selecao[0])
+            self.entry_busca_veiculo.delete(0, tk.END)
+            self.entry_busca_veiculo.insert(0, veiculo_texto)
+            self.veiculo_selecionado = veiculo_texto
+            self.esconder_resultados()
+            
+            # Preenche dados automaticamente
+            self.ao_selecionar_veiculo()
+    
+    
+    def navegar_lista(self, direcao):
+        """Navega na listbox com teclado"""
+        selecao_atual = self.listbox_veiculos.curselection()
+        
+        if not selecao_atual:
+            self.listbox_veiculos.selection_set(0)
+            return
+        
+        indice = selecao_atual[0]
+        
+        if direcao == 'up' and indice > 0:
+            self.listbox_veiculos.selection_clear(indice)
+            self.listbox_veiculos.selection_set(indice - 1)
+            self.listbox_veiculos.see(indice - 1)
+        elif direcao == 'down' and indice < self.listbox_veiculos.size() - 1:
+            self.listbox_veiculos.selection_clear(indice)
+            self.listbox_veiculos.selection_set(indice + 1)
+            self.listbox_veiculos.see(indice + 1)
     
     
     def adicionar_novo_destino(self):
@@ -340,7 +452,11 @@ class FormularioRegistro(tk.Toplevel):
         JanelaCadastroVeiculos(self, self.gerenciador_veiculos)
         
         # Atualiza lista após fechar cadastro
-        self.combo_veiculo_cadastrado['values'] = self.gerenciador_veiculos.obter_veiculos_ativos()
+        if hasattr(self, 'combo_veiculo_cadastrado'):
+            self.combo_veiculo_cadastrado['values'] = self.gerenciador_veiculos.obter_veiculos_ativos()
+        else:
+            # Nova busca com entry
+            self.atualizar_lista_veiculos()
     
     
     def preencher_dados(self, registro):
@@ -392,6 +508,12 @@ class FormularioRegistro(tk.Toplevel):
         
         if not dados.get('DATA ENTRADA'):
             erros.append("• Data de Entrada é obrigatória")
+        
+        # KM e N° OF são opcionais apenas quando status = "EM TRÂNSITO"
+        status = dados.get('STATUS', '').upper()
+        if status != 'EM TRÂNSITO':
+            # Para outros status, KM e N° OF podem ser validados se necessário
+            pass  # Mantém opcional para todos
         
         # Valida formato de datas
         for campo in ['DATA', 'DATA ENTRADA', 'DATA SAÍDA']:
@@ -456,6 +578,154 @@ class FormularioRegistro(tk.Toplevel):
         self.destroy()
 
 
+class FormularioNota(tk.Toplevel):
+    """Formulário para adicionar/editar notas"""
+    
+    def __init__(self, parent, db, gerenciador_veiculos, nota=None, callback=None):
+        super().__init__(parent)
+        
+        self.db = db
+        self.gerenciador_veiculos = gerenciador_veiculos
+        self.nota = nota
+        self.callback = callback
+        
+        self.title("Nova Nota" if nota is None else "Editar Nota")
+        self.geometry("600x400")
+        self.resizable(False, False)
+        
+        self.transient(parent)
+        self.grab_set()
+        
+        self.criar_formulario()
+        
+        if nota is not None:
+            self.preencher_dados(nota)
+    
+    
+    def criar_formulario(self):
+        """Cria campos do formulário"""
+        main_frame = ttk.Frame(self, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Label(
+            main_frame,
+            text="Nova Nota" if self.nota is None else "Editar Nota",
+            font=('Arial', 14, 'bold')
+        ).grid(row=0, column=0, columnspan=2, pady=(0, 20))
+        
+        self.campos = {}
+        
+        # Data Programada
+        ttk.Label(main_frame, text="📅 Data Programada:", font=('Arial', 10, 'bold')).grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.campos['data_programada'] = ttk.Entry(main_frame, width=30)
+        self.campos['data_programada'].grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+        self.campos['data_programada'].insert(0, datetime.now().strftime('%d/%m/%Y'))
+        
+        # Placa
+        ttk.Label(main_frame, text="🚛 Placa:", font=('Arial', 10, 'bold')).grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.campos['placa'] = ttk.Combobox(
+            main_frame,
+            width=28,
+            values=self.gerenciador_veiculos.obter_veiculos_ativos()
+        )
+        self.campos['placa'].grid(row=2, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+        
+        # Status
+        ttk.Label(main_frame, text="📊 Status:", font=('Arial', 10, 'bold')).grid(row=3, column=0, sticky=tk.W, pady=5)
+        self.campos['status'] = ttk.Combobox(
+            main_frame,
+            width=28,
+            values=['PENDENTE', 'PROGRAMADO', 'EM ANDAMENTO', 'CONCLUÍDO', 'CANCELADO'],
+            state='readonly'
+        )
+        self.campos['status'].grid(row=3, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+        self.campos['status'].set('PENDENTE')
+        
+        # Observação
+        ttk.Label(main_frame, text="📝 Observação:", font=('Arial', 10, 'bold')).grid(row=4, column=0, sticky=tk.W, pady=5)
+        frame_obs = ttk.Frame(main_frame)
+        frame_obs.grid(row=4, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
+        
+        self.campos['observacao'] = tk.Text(frame_obs, height=8, width=40, font=('Arial', 10))
+        self.campos['observacao'].pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scroll_obs = ttk.Scrollbar(frame_obs, command=self.campos['observacao'].yview)
+        scroll_obs.pack(side=tk.RIGHT, fill=tk.Y)
+        self.campos['observacao'].config(yscrollcommand=scroll_obs.set)
+        
+        # Botões
+        frame_botoes = ttk.Frame(main_frame)
+        frame_botoes.grid(row=5, column=0, columnspan=2, pady=20)
+        
+        ttk.Button(frame_botoes, text="💾 Salvar", command=self.salvar).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_botoes, text="❌ Cancelar", command=self.destroy).pack(side=tk.LEFT, padx=5)
+    
+    
+    def preencher_dados(self, nota):
+        """Preenche formulário com dados da nota"""
+        self.campos['data_programada'].delete(0, tk.END)
+        self.campos['data_programada'].insert(0, nota['data_programada'])
+        
+        self.campos['placa'].set(nota['placa'])
+        
+        if nota['status']:
+            self.campos['status'].set(nota['status'])
+        
+        if nota['observacao']:
+            self.campos['observacao'].delete('1.0', tk.END)
+            self.campos['observacao'].insert('1.0', nota['observacao'])
+    
+    
+    def salvar(self):
+        """Salva nota no banco"""
+        data_prog = self.campos['data_programada'].get().strip()
+        placa_full = self.campos['placa'].get().strip()
+        status = self.campos['status'].get().strip()
+        obs = self.campos['observacao'].get('1.0', tk.END).strip()
+        
+        # Validações
+        if not data_prog:
+            messagebox.showwarning("Atenção", "Informe a data programada!")
+            return
+        
+        if not placa_full:
+            messagebox.showwarning("Atenção", "Selecione uma placa!")
+            return
+        
+        # Extrai placa do formato "TIPO - PLACA"
+        placa = self.gerenciador_veiculos.extrair_placa_da_selecao(placa_full)
+        
+        try:
+            cursor = self.db.conn.cursor()
+            
+            if self.nota is None:
+                # Nova nota
+                cursor.execute("""
+                    INSERT INTO notas (data_programada, placa, status, observacao, data_criacao)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (data_prog, placa, status, obs, datetime.now().strftime('%d/%m/%Y %H:%M:%S')))
+            else:
+                # Editar nota
+                cursor.execute("""
+                    UPDATE notas
+                    SET data_programada = ?, placa = ?, status = ?, observacao = ?
+                    WHERE id = ?
+                """, (data_prog, placa, status, obs, self.nota['id']))
+            
+            self.db.conn.commit()
+            messagebox.showinfo("Sucesso", "Nota salva com sucesso!")
+            
+            if self.callback:
+                self.callback()
+            
+            self.destroy()
+            
+        except sqlite3.IntegrityError:
+            messagebox.showerror("Erro", "Já existe uma nota para esta placa nesta data!")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao salvar nota: {e}")
+
+
 class SistemaManutencao:
     """
     Classe principal da interface gráfica
@@ -503,6 +773,11 @@ class SistemaManutencao:
         self.ordem_colunas = {}  # Armazena estado de ordenação de cada coluna
         self.df_original = None  # Guarda ordem original dos dados
         
+        # Controle de reordenação de colunas (drag-and-drop)
+        self.coluna_arrastada = None
+        self.posicao_original_x = None
+        self.ordem_colunas_preferida = self.carregar_ordem_colunas()
+        
         # Configura estilo
         self.configurar_estilo()
         
@@ -514,6 +789,9 @@ class SistemaManutencao:
         
         # Atualiza estatísticas
         self.atualizar_estatisticas()
+        
+        # Carrega notas
+        self.atualizar_notas()
         
         # Configura fechamento
         self.root.protocol("WM_DELETE_WINDOW", self.fechar_aplicacao)
@@ -556,8 +834,8 @@ class SistemaManutencao:
             
             # Carrega e redimensiona logo
             logo_original = Image.open(logo_path)
-            # Redimensiona mantendo proporção
-            altura_nova = 80
+            # Redimensiona mantendo proporção - LOGO MAIOR (120px)
+            altura_nova = 120  # Aumentado de 80 para 120 pixels
             proporcao = altura_nova / logo_original.height
             largura_nova = int(logo_original.width * proporcao)
             logo_redimensionada = logo_original.resize((largura_nova, altura_nova), Image.Resampling.LANCZOS)
@@ -577,7 +855,7 @@ class SistemaManutencao:
             titulo_frame,
             text="SISTEMA DE GESTÃO DE MANUTENÇÃO - ALS",
             style='Header.TLabel'
-        ).pack(anchor=tk.W, pady=(25, 0))
+        ).pack(anchor=tk.W, pady=(45, 0))  # Ajustado para centralizar com logo maior
         
         # Estatísticas
         self.frame_stats = ttk.Frame(frame_topo)
@@ -604,7 +882,7 @@ class SistemaManutencao:
         ttk.Label(filtro_linha, text="Status:").pack(side=tk.LEFT, padx=5)
         self.filtro_status = ttk.Combobox(
             filtro_linha,
-            values=['', 'EM SERVIÇO', 'FINALIZADO'],
+            values=['', 'EM TRÂNSITO', 'EM SERVIÇO', 'FINALIZADO'],
             width=12
         )
         self.filtro_status.pack(side=tk.LEFT, padx=5)
@@ -624,11 +902,14 @@ class SistemaManutencao:
         ttk.Button(frame_acoes, text="🚛  Veículos", command=self.gerenciar_veiculos).pack(side=tk.LEFT, padx=5)
         ttk.Button(frame_acoes, text="📊  Relatório", command=self.gerar_relatorio).pack(side=tk.LEFT, padx=5)
         ttk.Button(frame_acoes, text="📤  Exportar", command=self.exportar_excel).pack(side=tk.LEFT, padx=5)
-        ttk.Button(frame_acoes, text="📥  Importar", command=self.importar_dados).pack(side=tk.LEFT, padx=5)
         
-        # ==== FRAME TABELA ====
-        frame_tabela = ttk.Frame(self.root, padding="10")
-        frame_tabela.pack(fill=tk.BOTH, expand=True)
+        # ==== NOTEBOOK (ABAS) ====
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # ABA 1: Registros de Manutenção
+        frame_tabela = ttk.Frame(self.notebook, padding="10")
+        self.notebook.add(frame_tabela, text="📋 Registros de Manutenção")
         
         # Scrollbars
         scroll_y = ttk.Scrollbar(frame_tabela, orient=tk.VERTICAL)
@@ -650,6 +931,10 @@ class SistemaManutencao:
                    'SERVIÇO A EXECUTAR', 'STATUS', 'DATA ENTRADA', 'DATA SAÍDA',
                    'DIAS', 'NR° OF', 'OBS']
         
+        # Aplica ordem personalizada se existir
+        if self.ordem_colunas_preferida:
+            colunas = self.ordem_colunas_preferida
+        
         self.tree['columns'] = colunas
         self.tree.column('#0', width=0, stretch=tk.NO)
         
@@ -667,12 +952,64 @@ class SistemaManutencao:
                 command=lambda c=col: self.ordenar_por_coluna(c)
             )
         
+        # Configura eventos de drag-and-drop nas colunas
+        self.tree.bind('<Button-1>', self.iniciar_arraste_coluna)
+        self.tree.bind('<B1-Motion>', self.arrastar_coluna)
+        self.tree.bind('<ButtonRelease-1>', self.finalizar_arraste_coluna)
         self.tree.bind('<Double-1>', lambda e: self.editar_registro())
         self.tree.bind('<<TreeviewSelect>>', self.on_selecionar)
         
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
         scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
         self.tree.pack(fill=tk.BOTH, expand=True)
+        
+        # ABA 2: Notas / Anotações
+        frame_notas = ttk.Frame(self.notebook, padding="10")
+        self.notebook.add(frame_notas, text="📝 Notas e Anotações")
+        
+        # Frame de ações das notas
+        frame_acoes_notas = ttk.Frame(frame_notas)
+        frame_acoes_notas.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Button(frame_acoes_notas, text="➕  Nova Nota", command=self.nova_nota).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_acoes_notas, text="✏️  Editar Nota", command=self.editar_nota).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_acoes_notas, text="🗑️  Excluir Nota", command=self.excluir_nota).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_acoes_notas, text="🔄  Atualizar", command=self.atualizar_notas).pack(side=tk.LEFT, padx=5)
+        
+        # Tabela de notas
+        frame_tabela_notas = ttk.Frame(frame_notas)
+        frame_tabela_notas.pack(fill=tk.BOTH, expand=True)
+        
+        scroll_y_notas = ttk.Scrollbar(frame_tabela_notas, orient=tk.VERTICAL)
+        scroll_x_notas = ttk.Scrollbar(frame_tabela_notas, orient=tk.HORIZONTAL)
+        
+        self.tree_notas = ttk.Treeview(
+            frame_tabela_notas,
+            yscrollcommand=scroll_y_notas.set,
+            xscrollcommand=scroll_x_notas.set,
+            selectmode='browse'
+        )
+        
+        scroll_y_notas.config(command=self.tree_notas.yview)
+        scroll_x_notas.config(command=self.tree_notas.xview)
+        
+        # Colunas das notas: Data Programada, Placa, Status, Observação
+        colunas_notas = ['DATA PROGRAMADA', 'PLACA', 'STATUS', 'OBSERVAÇÃO']
+        
+        self.tree_notas['columns'] = colunas_notas
+        self.tree_notas.column('#0', width=0, stretch=tk.NO)
+        
+        larguras_notas = {'DATA PROGRAMADA': 150, 'PLACA': 120, 'STATUS': 150, 'OBSERVAÇÃO': 500}
+        
+        for col in colunas_notas:
+            self.tree_notas.column(col, width=larguras_notas.get(col, 150), anchor=tk.W)
+            self.tree_notas.heading(col, text=col, anchor=tk.W)
+        
+        self.tree_notas.bind('<Double-1>', lambda e: self.editar_nota())
+        
+        scroll_y_notas.pack(side=tk.RIGHT, fill=tk.Y)
+        scroll_x_notas.pack(side=tk.BOTTOM, fill=tk.X)
+        self.tree_notas.pack(fill=tk.BOTH, expand=True)
         
         # ==== STATUS BAR ====
         self.label_status = ttk.Label(
@@ -692,6 +1029,165 @@ class SistemaManutencao:
         if selecao:
             item = self.tree.item(selecao[0])
             self.indice_selecionado = item['tags'][0] if item['tags'] else None
+    
+    
+    def carregar_ordem_colunas(self):
+        """
+        Carrega ordem personalizada das colunas do arquivo de configuração
+        """
+        config_file = 'data/config_colunas.txt'
+        try:
+            if os.path.exists(config_file):
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    colunas = f.read().strip().split(',')
+                    if len(colunas) == 12:  # Valida se tem todas as 12 colunas
+                        return colunas
+        except:
+            pass
+        return None
+    
+    
+    def salvar_ordem_colunas(self, colunas):
+        """
+        Salva ordem personalizada das colunas em arquivo de configuração
+        """
+        config_file = 'data/config_colunas.txt'
+        try:
+            with open(config_file, 'w', encoding='utf-8') as f:
+                f.write(','.join(colunas))
+        except Exception as e:
+            print(f"Erro ao salvar ordem das colunas: {e}")
+    
+    
+    def iniciar_arraste_coluna(self, event):
+        """
+        Inicia arraste de coluna (quando clica no cabeçalho)
+        """
+        # Identifica se clicou no cabeçalho
+        regiao = self.tree.identify_region(event.x, event.y)
+        if regiao == 'heading':
+            coluna = self.tree.identify_column(event.x)
+            if coluna != '#0':  # Ignora coluna invisível
+                # Converte #1, #2, etc para índice numérico
+                indice_coluna = int(coluna.replace('#', '')) - 1
+                colunas_atuais = list(self.tree['columns'])
+                if 0 <= indice_coluna < len(colunas_atuais):
+                    self.coluna_arrastada = colunas_atuais[indice_coluna]
+                    self.posicao_original_x = event.x
+                    self.tree.config(cursor='hand2')
+    
+    
+    def arrastar_coluna(self, event):
+        """
+        Movimenta coluna durante arraste
+        """
+        if self.coluna_arrastada:
+            # Mostra cursor de movimento
+            self.tree.config(cursor='fleur')
+    
+    
+    def finalizar_arraste_coluna(self, event):
+        """
+        Finaliza arraste e reordena colunas
+        """
+        if self.coluna_arrastada and self.posicao_original_x is not None:
+            # Restaura cursor
+            self.tree.config(cursor='')
+            
+            # Identifica coluna de destino
+            regiao = self.tree.identify_region(event.x, event.y)
+            if regiao == 'heading':
+                coluna_destino = self.tree.identify_column(event.x)
+                if coluna_destino != '#0':
+                    indice_destino = int(coluna_destino.replace('#', '')) - 1
+                    colunas_atuais = list(self.tree['columns'])
+                    
+                    if 0 <= indice_destino < len(colunas_atuais):
+                        # Reordena colunas
+                        coluna_destino_nome = colunas_atuais[indice_destino]
+                        
+                        # Remove coluna arrastada da posição original
+                        indice_original = colunas_atuais.index(self.coluna_arrastada)
+                        colunas_atuais.pop(indice_original)
+                        
+                        # Insere na nova posição
+                        indice_destino_ajustado = colunas_atuais.index(coluna_destino_nome)
+                        
+                        # Se arrastou da esquerda para direita, ajusta índice
+                        if indice_original < indice_destino_ajustado + 1:
+                            colunas_atuais.insert(indice_destino_ajustado + 1, self.coluna_arrastada)
+                        else:
+                            colunas_atuais.insert(indice_destino_ajustado, self.coluna_arrastada)
+                        
+                        # Aplica nova ordem
+                        self.aplicar_nova_ordem_colunas(colunas_atuais)
+                        
+                        # Salva configuração
+                        self.salvar_ordem_colunas(colunas_atuais)
+                        self.ordem_colunas_preferida = colunas_atuais
+                        
+                        self.label_status.config(text=f"✅  Coluna '{self.coluna_arrastada}' movida com sucesso!")
+        
+        # Reseta variáveis
+        self.coluna_arrastada = None
+        self.posicao_original_x = None
+        self.tree.config(cursor='')
+    
+    
+    def aplicar_nova_ordem_colunas(self, novas_colunas):
+        """
+        Aplica nova ordem de colunas à TreeView
+        """
+        # Guarda dados atuais
+        dados_atuais = []
+        for item in self.tree.get_children():
+            valores = self.tree.item(item)['values']
+            tags = self.tree.item(item)['tags']
+            dados_atuais.append((valores, tags))
+        
+        # Mapa de colunas antigas para novas
+        colunas_antigas = list(self.tree['columns'])
+        
+        # Larguras das colunas
+        larguras = {'DATA': 90, 'PLACA': 80, 'KM': 70, 'VEÍCULO': 100,
+                    'DESTINO PROGRAMADO': 130, 'SERVIÇO A EXECUTAR': 200,
+                    'STATUS': 100, 'DATA ENTRADA': 100, 'DATA SAÍDA': 100,
+                    'DIAS': 50, 'NR° OF': 70, 'OBS': 150}
+        
+        # Atualiza configuração de colunas
+        self.tree['columns'] = novas_colunas
+        
+        for col in novas_colunas:
+            self.tree.column(col, width=larguras.get(col, 100), anchor=tk.W)
+            self.tree.heading(
+                col,
+                text=col,
+                anchor=tk.W,
+                command=lambda c=col: self.ordenar_por_coluna(c)
+            )
+        
+        # Reinsere dados com nova ordem de colunas
+        self.tree.delete(*self.tree.get_children())
+        
+        # Mapa de índices: coluna_antiga -> posição
+        mapa_indices = {col: idx for idx, col in enumerate(colunas_antigas)}
+        
+        for valores_antigos, tags in dados_atuais:
+            # Reordena valores conforme nova ordem de colunas
+            valores_novos = []
+            for nova_col in novas_colunas:
+                idx_antigo = mapa_indices.get(nova_col, 0)
+                if idx_antigo < len(valores_antigos):
+                    valores_novos.append(valores_antigos[idx_antigo])
+                else:
+                    valores_novos.append('')
+            
+            self.tree.insert('', tk.END, values=valores_novos, tags=tags)
+        
+        # Mantém cores
+        self.tree.tag_configure('em_transito', background='#d3d3d3')
+        self.tree.tag_configure('em_servico', background='#fff3cd')
+        self.tree.tag_configure('finalizado', background='#d1e7dd')
     
     
     def ordenar_por_coluna(self, coluna):
@@ -805,31 +1301,56 @@ class SistemaManutencao:
             if self.df_original is None:
                 self.df_original = self.db.df.copy()
         
-        # Popula tabela
+        # Mapa de colunas visuais para dados
+        mapa_dados = {
+            'DATA': 'DATA',
+            'PLACA': 'PLACA',
+            'KM': 'KM',
+            'VEÍCULO': 'VEÍCULO',
+            'DESTINO PROGRAMADO': 'DESTINO PROGRAMADO',
+            'SERVIÇO A EXECUTAR': 'SERVIÇO A EXECUTAR',
+            'STATUS': 'STATUS',
+            'DATA ENTRADA': 'DATA ENTRADA',
+            'DATA SAÍDA': 'DATA SAÍDA',
+            'DIAS': 'TOTAL DE DIAS EM MANUTENÇÃO',
+            'NR° OF': 'NR° OF',
+            'OBS': 'OBS'
+        }
+        
+        # Obtém ordem atual das colunas
+        colunas_atuais = list(self.tree['columns'])
+        
+        # Popula tabela respeitando ordem das colunas
         for idx, row in df.iterrows():
-            valores = [
-                formatar_data_br(row.get('DATA', '')),
-                row.get('PLACA', ''),
-                row.get('KM', ''),
-                row.get('VEÍCULO', ''),
-                row.get('DESTINO PROGRAMADO', ''),
-                row.get('SERVIÇO A EXECUTAR', ''),
-                row.get('STATUS', ''),
-                formatar_data_br(row.get('DATA ENTRADA', '')),
-                formatar_data_br(row.get('DATA SAÍDA', '')),
-                row.get('DIAS', row.get('TOTAL DE DIAS EM MANUTENÇÃO', '0')),
-                row.get('NR° OF', ''),
-                row.get('OBS', '')
-            ]
+            # Constrói valores na ordem das colunas atuais
+            valores = []
+            for col in colunas_atuais:
+                col_dado = mapa_dados.get(col, col)
+                
+                # Tratamento especial para datas
+                if col in ['DATA', 'DATA ENTRADA', 'DATA SAÍDA']:
+                    valores.append(formatar_data_br(row.get(col_dado, '')))
+                # Tratamento especial para DIAS
+                elif col == 'DIAS':
+                    valores.append(row.get('DIAS', row.get('TOTAL DE DIAS EM MANUTENÇÃO', '0')))
+                else:
+                    valores.append(row.get(col_dado, ''))
             
             # Define cor baseada no status
-            tag = 'em_servico' if row.get('STATUS', '').upper() == 'EM SERVIÇO' else 'finalizado'
+            status_upper = row.get('STATUS', '').upper()
+            if status_upper == 'EM TRÂNSITO':
+                tag = 'em_transito'
+            elif status_upper == 'EM SERVIÇO':
+                tag = 'em_servico'
+            else:
+                tag = 'finalizado'
             
             self.tree.insert('', tk.END, values=valores, tags=(idx, tag))
         
         # Configura cores
-        self.tree.tag_configure('em_servico', background='#fff3cd')
-        self.tree.tag_configure('finalizado', background='#d1e7dd')
+        self.tree.tag_configure('em_transito', background='#d3d3d3')  # Cinza
+        self.tree.tag_configure('em_servico', background='#fff3cd')   # Amarelo claro
+        self.tree.tag_configure('finalizado', background='#d1e7dd')   # Verde claro
         
         self.label_status.config(text=f"📋  {len(df)} registros carregados")
     
@@ -1056,202 +1577,103 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                  width=20, height=2, bg='#3498db', fg='white', font=('Arial', 10, 'bold')).pack(pady=5)
     
     
-    def exportar_excel(self):
-        """
-        Exporta dados para Excel
-        """
-        arquivo = filedialog.asksaveasfilename(
-            defaultextension=".xlsx",
-            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
-            initialfile=f"Exportacao_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        )
-        
-        if arquivo:
-            try:
-                self.db.df.to_excel(arquivo, index=False, sheet_name='Manutenções')
-                messagebox.showinfo("Sucesso", f"Dados exportados para:\n{arquivo}")
-            except Exception as e:
-                messagebox.showerror("Erro", f"Não foi possível exportar:\n{e}")
+    # ==== MÉTODOS PARA NOTAS === =
+    
+    def nova_nota(self):
+        """Abre formulário para nova nota"""
+        FormularioNota(self.root, self.db, self.gerenciador_veiculos, callback=self.atualizar_notas)
     
     
-    def importar_dados(self):
-        """
-        Importa dados de uma planilha Excel externa
-        """
-        # Seleciona arquivo
-        arquivo = filedialog.askopenfilename(
-            title="Selecione a planilha para importar",
-            filetypes=[
-                ("Excel files", "*.xlsx *.xls"),
-                ("All files", "*.*")
-            ]
-        )
-        
-        if not arquivo:
+    def editar_nota(self):
+        """Edita nota selecionada"""
+        selecao = self.tree_notas.selection()
+        if not selecao:
+            messagebox.showwarning("Atenção", "Selecione uma nota para editar!")
             return
         
-        # Cria janela de opções de importação
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Opções de Importação")
-        dialog.geometry("500x350")
-        dialog.transient(self.root)
-        dialog.grab_set()
+        item = self.tree_notas.item(selecao[0])
+        id_nota = item['tags'][0] if item['tags'] else None
         
-        # Centraliza
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - 250
-        y = (dialog.winfo_screenheight() // 2) - 175
-        dialog.geometry(f"500x350+{x}+{y}")
+        if id_nota is None:
+            return
         
-        # Frame principal
-        frame = ttk.Frame(dialog, padding="20")
-        frame.pack(fill=tk.BOTH, expand=True)
+        # Busca dados da nota no banco
+        cursor = self.db.conn.cursor()
+        cursor.execute("SELECT * FROM notas WHERE id = ?", (id_nota,))
+        nota = cursor.fetchone()
         
-        # Título
-        ttk.Label(
-            frame,
-            text="📥 Importar Dados de Planilha",
-            font=('Arial', 14, 'bold')
-        ).pack(pady=(0, 10))
+        if nota:
+            nota_dict = {
+                'id': nota[0],
+                'data_programada': nota[1],
+                'placa': nota[2],
+                'status': nota[3],
+                'observacao': nota[4]
+            }
+            FormularioNota(self.root, self.db, self.gerenciador_veiculos, nota=nota_dict, callback=self.atualizar_notas)
+    
+    
+    def excluir_nota(self):
+        """Exclui nota selecionada"""
+        selecao = self.tree_notas.selection()
+        if not selecao:
+            messagebox.showwarning("Atenção", "Selecione uma nota para excluir!")
+            return
         
-        # Mostra arquivo selecionado
-        ttk.Label(
-            frame,
-            text=f"Arquivo selecionado:",
-            font=('Arial', 9, 'bold')
-        ).pack(anchor=tk.W, pady=(10, 0))
+        if not messagebox.askyesno("Confirmar", "Deseja realmente excluir esta nota?"):
+            return
         
-        ttk.Label(
-            frame,
-            text=os.path.basename(arquivo),
-            font=('Arial', 9),
-            foreground='blue'
-        ).pack(anchor=tk.W, pady=(0, 15))
+        item = self.tree_notas.item(selecao[0])
+        id_nota = item['tags'][0] if item['tags'] else None
         
-        # Opções de modo
-        ttk.Label(
-            frame,
-            text="Escolha o modo de importação:",
-            font=('Arial', 10, 'bold')
-        ).pack(anchor=tk.W, pady=(10, 10))
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute("DELETE FROM notas WHERE id = ?", (id_nota,))
+            self.db.conn.commit()
+            self.atualizar_notas()
+            messagebox.showinfo("Sucesso", "Nota excluída com sucesso!")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao excluir nota: {e}")
+    
+    
+    def atualizar_notas(self):
+        """Atualiza tabela de notas"""
+        # Limpa tabela
+        for item in self.tree_notas.get_children():
+            self.tree_notas.delete(item)
         
-        modo_var = tk.StringVar(value='adicionar')
-        
-        # Opção 1: Adicionar (recomendado)
-        frame_opt1 = ttk.Frame(frame)
-        frame_opt1.pack(fill=tk.X, pady=5)
-        
-        ttk.Radiobutton(
-            frame_opt1,
-            text="➕ Adicionar Registros Novos (Recomendado)",
-            variable=modo_var,
-            value='adicionar'
-        ).pack(anchor=tk.W)
-        
-        ttk.Label(
-            frame_opt1,
-            text="   → Adiciona apenas registros que não existem no sistema.\n   → Ignora duplicatas (mesma PLACA + DATA).",
-            font=('Arial', 8),
-            foreground='gray'
-        ).pack(anchor=tk.W, padx=(20, 0))
-        
-        # Opção 2: Mesclar
-        frame_opt2 = ttk.Frame(frame)
-        frame_opt2.pack(fill=tk.X, pady=5)
-        
-        ttk.Radiobutton(
-            frame_opt2,
-            text="🔄 Mesclar (Adicionar + Atualizar)",
-            variable=modo_var,
-            value='mesclar'
-        ).pack(anchor=tk.W)
-        
-        ttk.Label(
-            frame_opt2,
-            text="   → Adiciona registros novos.\n   → Atualiza registros existentes com novos dados.",
-            font=('Arial', 8),
-            foreground='gray'
-        ).pack(anchor=tk.W, padx=(20, 0))
-        
-        # Opção 3: Sobrescrever (CUIDADO)
-        frame_opt3 = ttk.Frame(frame)
-        frame_opt3.pack(fill=tk.X, pady=5)
-        
-        ttk.Radiobutton(
-            frame_opt3,
-            text="⚠️ Sobrescrever Tudo (CUIDADO!)",
-            variable=modo_var,
-            value='sobrescrever'
-        ).pack(anchor=tk.W)
-        
-        ttk.Label(
-            frame_opt3,
-            text="   → APAGA TODOS os dados atuais.\n   → Substitui com dados da planilha importada.",
-            font=('Arial', 8),
-            foreground='red'
-        ).pack(anchor=tk.W, padx=(20, 0))
-        
-        # Frame de botões
-        frame_botoes = ttk.Frame(frame)
-        frame_botoes.pack(pady=20)
-        
-        def confirmar_importacao():
-            modo = modo_var.get()
+        try:
+            # Carrega notas do banco
+            cursor = self.db.conn.cursor()
+            cursor.execute("SELECT id, data_programada, placa, status, observacao FROM notas ORDER BY data_programada DESC")
+            notas = cursor.fetchall()
             
-            # Confirmação extra para sobrescrever
-            if modo == 'sobrescrever':
-                resposta = messagebox.askyesno(
-                    "⚠️ ATENÇÃO",
-                    "TODOS OS DADOS ATUAIS SERÃO APAGADOS!\n\n"
-                    "Um backup será criado, mas você tem certeza?",
-                    icon='warning',
-                    parent=dialog
+            for nota in notas:
+                id_nota, data_prog, placa, status, obs = nota
+                self.tree_notas.insert(
+                    '', 
+                    'end',
+                    values=(data_prog, placa, status or '', obs or ''),
+                    tags=(id_nota,)
                 )
-                if not resposta:
-                    return
+        except Exception as e:
+            print(f"Erro ao carregar notas: {e}")
+    
+    
+    def exportar_excel(self):
+        """Exporta dados atuais para Excel"""
+        try:
+            arquivo = filedialog.asksaveasfilename(
+                defaultextension=".xlsx",
+                filetypes=[("Excel", "*.xlsx")],
+                initialfile=f"manutencao_als_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            )
             
-            dialog.destroy()
-            
-            # Executa importação
-            self.label_status.config(text="⏳ Importando dados...")
-            self.root.update()
-            
-            try:
-                importador = ImportadorDados(self.db)
-                sucesso, mensagem = importador.importar_planilha(arquivo, modo=modo)
-                
-                if sucesso:
-                    messagebox.showinfo("✅ Importação Concluída", mensagem)
-                    self.atualizar_tabela()
-                    self.atualizar_estatisticas()
-                    self.label_status.config(text="✅ Dados importados com sucesso!")
-                else:
-                    messagebox.showerror("❌ Erro na Importação", mensagem)
-                    self.label_status.config(text="❌ Erro ao importar dados")
-                    
-            except Exception as e:
-                messagebox.showerror(
-                    "Erro",
-                    f"Erro inesperado durante importação:\n{e}"
-                )
-                self.label_status.config(text="❌ Erro ao importar")
-        
-        def cancelar_importacao():
-            dialog.destroy()
-        
-        ttk.Button(
-            frame_botoes,
-            text="📥  Importar",
-            command=confirmar_importacao,
-            width=15
-        ).pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(
-            frame_botoes,
-            text="❌  Cancelar",
-            command=cancelar_importacao,
-            width=15
-        ).pack(side=tk.LEFT, padx=5)
+            if arquivo:
+                self.db.df.to_excel(arquivo, index=False)
+                messagebox.showinfo("Sucesso", f"Dados exportados para:\n{arquivo}")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao exportar: {e}")
     
     
     def fechar_aplicacao(self):

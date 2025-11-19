@@ -419,6 +419,17 @@ echo [4/4] Verificando resultado...
 if exist "dist\SistemaManutencaoALS\SistemaManutencaoALS.exe" (
     echo [OK] Executável criado com sucesso!
     echo.
+    
+    REM Copia pasta data com banco SQLite para o executável
+    echo [INFO] Copiando banco de dados e configurações...
+    if not exist "dist\SistemaManutencaoALS\data" mkdir "dist\SistemaManutencaoALS\data"
+    if exist "data\sistema_als.db" copy /Y "data\sistema_als.db" "dist\SistemaManutencaoALS\data\" >nul
+    if exist "data\config_colunas.txt" copy /Y "data\config_colunas.txt" "dist\SistemaManutencaoALS\data\" >nul
+    if exist "data\cadastro_veiculos.xlsx" copy /Y "data\cadastro_veiculos.xlsx" "dist\SistemaManutencaoALS\data\" >nul
+    if exist "data\cadastro_destinos.xlsx" copy /Y "data\cadastro_destinos.xlsx" "dist\SistemaManutencaoALS\data\" >nul
+    echo [OK] Banco de dados copiado
+    echo.
+    
     echo ╔════════════════════════════════════════════════════════════╗
     echo ║         EXECUTÁVEL CRIADO COM SUCESSO!                   ║
     echo ╚════════════════════════════════════════════════════════════╝
@@ -430,6 +441,8 @@ if exist "dist\SistemaManutencaoALS\SistemaManutencaoALS.exe" (
     echo    ✓ SistemaManutencaoALS.exe (executável principal)
     echo    ✓ Arquivos de suporte (_internal/)
     echo    ✓ Python e bibliotecas embutidos
+    echo    ✓ Banco de dados SQLite (data\sistema_als.db)
+    echo    ✓ Configurações personalizadas
     echo.
     echo ╔════════════════════════════════════════════════════════════╗
     echo ║         COMO ENVIAR PARA SEU PAI                         ║
@@ -439,19 +452,22 @@ if exist "dist\SistemaManutencaoALS\SistemaManutencaoALS.exe" (
     echo ───────────────────────────────────────────────────────────
     echo.
     echo 1. Copie TODA a pasta: dist\SistemaManutencaoALS\
-    echo 2. Copie também: data\ (com a planilha)
+    echo    ├── SistemaManutencaoALS.exe (executável)
+    echo    ├── _internal\ (arquivos de suporte)
+    echo    └── data\ (banco de dados SQLite)
     echo.
-    echo Na máquina dele, estrutura final:
-    echo   Sistema ALS\
-    echo   ├── SistemaManutencaoALS\ (PASTA COMPLETA do dist)
-    echo   │   ├── SistemaManutencaoALS.exe
-    echo   │   └── _internal\ (arquivos de suporte)
-    echo   └── data\
-    echo       └── PROGRAMAÇÃO MANUTENÇÃO (CÓPIA 2).xlsx
-    echo.
-    echo 3. Ele executa: SistemaManutencaoALS.exe
+    echo 2. Ele executa: SistemaManutencaoALS.exe
     echo.
     echo ╔════════════════════════════════════════════════════════════╗
+    echo ║  NOVIDADES DESTA VERSÃO:                                 ║
+    echo ║    ✓ Banco SQLite (mais rápido)                         ║
+    echo ║    ✓ Aba de Notas e Anotações                           ║
+    echo ║    ✓ Cálculo correto de dias (+1 dia)                   ║
+    echo ║    ✓ Status "EM TRÂNSITO" (cinza)                       ║
+    echo ║    ✓ Logo aumentada (120px)                             ║
+    echo ║    ✓ Colunas reordenáveis (drag-and-drop)              ║
+    echo ║    ✓ Busca de veículo com autocomplete                  ║
+    echo ║                                                            ║
     echo ║  ELE NÃO PRECISA DE NADA INSTALADO!                     ║
     echo ║    ✗ Python                                              ║
     echo ║    ✗ Bibliotecas                                         ║
