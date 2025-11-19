@@ -1682,15 +1682,15 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
         # Janela de opções
         dialog = tk.Toplevel(self.root)
         dialog.title("Importar Dados")
-        dialog.geometry("500x350")
+        dialog.geometry("550x450")
         dialog.transient(self.root)
         dialog.grab_set()
         
         # Centralizar
         dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (250)
-        y = (dialog.winfo_screenheight() // 2) - (175)
-        dialog.geometry(f"500x350+{x}+{y}")
+        x = (dialog.winfo_screenwidth() // 2) - (275)
+        y = (dialog.winfo_screenheight() // 2) - (225)
+        dialog.geometry(f"550x450+{x}+{y}")
         
         frame = ttk.Frame(dialog, padding="20")
         frame.pack(fill=tk.BOTH, expand=True)
@@ -1708,6 +1708,33 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
             justify=tk.CENTER
         ).pack(pady=(0, 20))
         
+        # Modo de importação
+        modo_frame = ttk.LabelFrame(frame, text="🔄 Modo de Importação", padding="10")
+        modo_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        modo_var = tk.StringVar(value="novo")
+        
+        ttk.Radiobutton(
+            modo_frame,
+            text="📝 Substituir tudo (apaga dados atuais e importa do zero)",
+            variable=modo_var,
+            value="substituir"
+        ).pack(anchor=tk.W, pady=2)
+        
+        ttk.Radiobutton(
+            modo_frame,
+            text="➕ Apenas registros novos (ignora duplicados)",
+            variable=modo_var,
+            value="novo"
+        ).pack(anchor=tk.W, pady=2)
+        
+        ttk.Radiobutton(
+            modo_frame,
+            text="🔄 Atualizar existentes (substitui duplicados e adiciona novos)",
+            variable=modo_var,
+            value="atualizar"
+        ).pack(anchor=tk.W, pady=2)
+        
         # Informações
         info_frame = ttk.LabelFrame(frame, text="ℹ️ Importante", padding="10")
         info_frame.pack(fill=tk.X, pady=(0, 15))
@@ -1716,8 +1743,7 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
             info_frame,
             text="• O arquivo Excel deve ter as mesmas colunas da planilha original\n"
                  "• Veículos e destinos serão cadastrados automaticamente\n"
-                 "• Um backup do banco atual será criado antes da importação\n"
-                 "• Registros duplicados serão ignorados",
+                 "• Um backup do banco atual será criado antes da importação",
             font=('Arial', 9),
             justify=tk.LEFT
         ).pack(anchor=tk.W)
@@ -1742,6 +1768,9 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
             
             if not resposta:
                 return
+            
+            # Pega o modo selecionado
+            modo = modo_var.get()
             
             try:
                 dialog.destroy()
@@ -1770,8 +1799,12 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                 
                 progress_win.update()
                 
-                # Lê Excel
-                df_excel = pd.read_excel(arquivo)
+                # Lê Excel (header=1 pula linha de título)
+                df_excel = pd.read_excel(arquivo, header=1)
+                
+                # Limpa nomes de colunas (remove espaços extras)
+                df_excel.columns = df_excel.columns.str.strip()
+                
                 label_status.config(text=f"Encontrados {len(df_excel)} registros")
                 progress_win.update()
                 
@@ -1781,66 +1814,163 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                 os.makedirs('backup', exist_ok=True)
                 shutil.copy2('data/sistema_als.db', backup_path)
                 
-                label_status.config(text="Importando para o banco...")
+                label_status.config(text=f"Modo: {modo.upper()} - Processando...")
                 progress_win.update()
                 
                 # Importa dados
                 cursor = self.db.conn.cursor()
                 contador = 0
+                atualizados = 0
                 erros = 0
+                
+                # Se modo for "substituir", limpa a tabela
+                if modo == "substituir":
+                    label_status.config(text="Limpando dados antigos...")
+                    progress_win.update()
+                    cursor.execute("DELETE FROM manutencoes")
+                    cursor.execute("DELETE FROM notas")
+                    self.db.conn.commit()
                 
                 for idx, row in df_excel.iterrows():
                     try:
+                        # Converte datas do pandas Timestamp para string formatada
+                        data_val = row.get('DATA')
+                        if pd.notna(data_val):
+                            if isinstance(data_val, pd.Timestamp):
+                                data_str = data_val.strftime('%d/%m/%Y')
+                            else:
+                                data_str = str(data_val).strip()
+                        else:
+                            data_str = ''
+                        
+                        placa = str(row.get('PLACA', '')).strip()
+                        
+                        data_entrada_val = row.get('DATA ENTRADA')
+                        if pd.notna(data_entrada_val):
+                            if isinstance(data_entrada_val, pd.Timestamp):
+                                data_entrada = data_entrada_val.strftime('%d/%m/%Y')
+                            else:
+                                data_entrada = str(data_entrada_val).strip()
+                        else:
+                            data_entrada = ''
+                        
+                        data_saida_val = row.get('DATA SAÍDA')
+                        if pd.notna(data_saida_val):
+                            if isinstance(data_saida_val, pd.Timestamp):
+                                data_saida = data_saida_val.strftime('%d/%m/%Y')
+                            else:
+                                data_saida = str(data_saida_val).strip()
+                        else:
+                            data_saida = ''
+                        
+                        # Converte KM para inteiro (remove decimais)
+                        km_val = row.get('KM')
+                        if pd.notna(km_val) and km_val != 'xxx':
+                            try:
+                                km = int(float(km_val))
+                            except:
+                                km = 0
+                        else:
+                            km = 0
+                        
+                        # Pula linhas completamente vazias (não conta como erro)
+                        if not placa and not data_str and not data_entrada:
+                            continue
+                        
+                        # Valida campos obrigatórios
+                        if not placa or not data_str or not data_entrada:
+                            erros += 1
+                            print(f"⚠️ Linha {idx+2}: Dados incompletos - Placa: '{placa}', Data: '{data_str}', Data Entrada: '{data_entrada}'")
+                            continue
+                        
+                        # Verifica se registro já existe (por PLACA + DATA + DATA_ENTRADA)
                         cursor.execute("""
-                            INSERT OR IGNORE INTO manutencoes (
-                                DATA, PLACA, KM, [VEÍCULO], [DESTINO PROGRAMADO],
-                                [SERVIÇO A EXECUTAR], STATUS, [DATA ENTRADA], [DATA SAÍDA],
-                                [TOTAL DE DIAS EM MANUTENÇÃO], [NR° OF], OBS, data_criacao
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (
-                            str(row.get('DATA', '')),
-                            str(row.get('PLACA', '')),
-                            float(row.get('KM', 0)) if pd.notna(row.get('KM')) else 0,
-                            str(row.get('VEÍCULO', '')),
-                            str(row.get('DESTINO PROGRAMADO', '')),
-                            str(row.get('SERVIÇO A EXECUTAR', '')),
-                            str(row.get('STATUS', '')),
-                            str(row.get('DATA ENTRADA', '')),
-                            str(row.get('DATA SAÍDA', '')),
-                            int(row.get('TOTAL DE DIAS EM MANUTENÇÃO', 0)) if pd.notna(row.get('TOTAL DE DIAS EM MANUTENÇÃO')) else 0,
-                            str(row.get('NR° OF', '')),
-                            str(row.get('OBS', '')),
-                            datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        ))
-                        contador += 1
+                            SELECT id FROM manutencoes 
+                            WHERE placa = ? AND data = ? AND data_entrada = ?
+                        """, (placa, data_str, data_entrada))
+                        
+                        existe = cursor.fetchone()
+                        
+                        if modo == "novo" and existe:
+                            # Modo "novo" - ignora se já existe
+                            erros += 1
+                            continue
+                        elif modo == "atualizar" and existe:
+                            # Atualiza registro existente
+                            cursor.execute("""
+                                UPDATE manutencoes SET
+                                    km = ?,
+                                    veiculo = ?,
+                                    destino_programado = ?,
+                                    servico_executar = ?,
+                                    status = ?,
+                                    data_saida = ?,
+                                    total_dias_manutencao = ?,
+                                    nr_of = ?,
+                                    obs = ?
+                                WHERE id = ?
+                            """, (
+                                km,
+                                str(row.get('VEÍCULO', '')),
+                                str(row.get('DESTINO PROGRAMADO', '')),
+                                str(row.get('SERVIÇO A EXECUTAR', '')),
+                                str(row.get('STATUS', '')),
+                                data_saida,
+                                int(row.get('TOTAL DE DIAS EM MANUTENÇÃO', 0)) if pd.notna(row.get('TOTAL DE DIAS EM MANUTENÇÃO')) else 0,
+                                str(row.get('NR° OF', '')),
+                                str(row.get('OBS', '')),
+                                existe[0]
+                            ))
+                            atualizados += 1
+                        else:
+                            # Insere novo registro (quando não existe)
+                            cursor.execute("""
+                                INSERT INTO manutencoes (
+                                    data, placa, km, veiculo, destino_programado,
+                                    servico_executar, status, data_entrada, data_saida,
+                                    total_dias_manutencao, nr_of, obs
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                data_str,
+                                placa,
+                                km,
+                                str(row.get('VEÍCULO', '')),
+                                str(row.get('DESTINO PROGRAMADO', '')),
+                                str(row.get('SERVIÇO A EXECUTAR', '')),
+                                str(row.get('STATUS', '')),
+                                data_entrada,
+                                data_saida,
+                                int(row.get('TOTAL DE DIAS EM MANUTENÇÃO', 0)) if pd.notna(row.get('TOTAL DE DIAS EM MANUTENÇÃO')) else 0,
+                                str(row.get('NR° OF', '')),
+                                str(row.get('OBS', ''))
+                            ))
+                            contador += 1
                     except Exception as e:
                         erros += 1
                         print(f"Erro no registro {idx}: {e}")
                 
                 # Auto-cadastra veículos
                 cursor.execute("""
-                    INSERT OR IGNORE INTO veiculos (PLACA, TIPO_VEICULO, DESCRICAO, STATUS, data_criacao)
+                    INSERT OR IGNORE INTO veiculos (placa, tipo_veiculo, descricao, data_cadastro)
                     SELECT DISTINCT 
-                        PLACA,
-                        [VEÍCULO],
+                        placa,
+                        veiculo,
                         'Importado do Excel',
-                        'ATIVO',
                         ?
                     FROM manutencoes
-                    WHERE PLACA IS NOT NULL AND PLACA != ''
+                    WHERE placa IS NOT NULL AND placa != ''
                 """, (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),))
                 
                 veiculos_novos = cursor.rowcount
                 
                 # Auto-cadastra destinos
                 cursor.execute("""
-                    INSERT OR IGNORE INTO destinos (NOME, STATUS, data_criacao)
+                    INSERT OR IGNORE INTO destinos (nome_destino, data_cadastro)
                     SELECT DISTINCT 
-                        [DESTINO PROGRAMADO],
-                        'ATIVO',
+                        destino_programado,
                         ?
                     FROM manutencoes
-                    WHERE [DESTINO PROGRAMADO] IS NOT NULL AND [DESTINO PROGRAMADO] != ''
+                    WHERE destino_programado IS NOT NULL AND destino_programado != ''
                 """, (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),))
                 
                 destinos_novos = cursor.rowcount
@@ -1855,14 +1985,27 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                 self.atualizar_estatisticas()
                 
                 # Mostra resultado
+                msg_modo = {
+                    "substituir": "Todos os dados foram substituídos",
+                    "novo": "Apenas registros novos foram importados",
+                    "atualizar": "Registros foram atualizados/adicionados"
+                }
+                
+                resultado = f"✅ Importação concluída com sucesso!\n\n"
+                resultado += f"🔄 Modo: {msg_modo[modo]}\n\n"
+                resultado += f"📊 Registros novos: {contador}\n"
+                
+                if modo == "atualizar":
+                    resultado += f"🔄 Registros atualizados: {atualizados}\n"
+                
+                resultado += f"⚠️ Erros/duplicados: {erros}\n"
+                resultado += f"🚛 Veículos cadastrados: {veiculos_novos}\n"
+                resultado += f"📍 Destinos cadastrados: {destinos_novos}\n\n"
+                resultado += f"💾 Backup salvo em:\n{backup_path}"
+                
                 messagebox.showinfo(
                     "Importação Concluída",
-                    f"✅ Importação concluída com sucesso!\n\n"
-                    f"📊 Registros importados: {contador}\n"
-                    f"⚠️ Erros/duplicados: {erros}\n"
-                    f"🚛 Veículos cadastrados: {veiculos_novos}\n"
-                    f"📍 Destinos cadastrados: {destinos_novos}\n\n"
-                    f"💾 Backup salvo em:\n{backup_path}"
+                    resultado
                 )
                 
             except Exception as e:

@@ -460,13 +460,19 @@ if exist "dist\SistemaManutencaoALS\SistemaManutencaoALS.exe" (
     echo.
     echo ╔════════════════════════════════════════════════════════════╗
     echo ║  NOVIDADES DESTA VERSÃO:                                 ║
-    echo ║    ✓ Banco SQLite (mais rápido)                         ║
+    echo ║    ✓ Banco SQLite (mais rápido que Excel)               ║
     echo ║    ✓ Aba de Notas e Anotações                           ║
     echo ║    ✓ Cálculo correto de dias (+1 dia)                   ║
     echo ║    ✓ Status "EM TRÂNSITO" (cinza)                       ║
     echo ║    ✓ Logo aumentada (120px)                             ║
     echo ║    ✓ Colunas reordenáveis (drag-and-drop)              ║
     echo ║    ✓ Busca de veículo com autocomplete                  ║
+    echo ║    ✓ Importação Excel com 3 modos:                      ║
+    echo ║       • Substituir tudo                                  ║
+    echo ║       • Apenas novos                                     ║
+    echo ║       • Atualizar existentes                             ║
+    echo ║    ✓ Datas e KM formatados corretamente                 ║
+    echo ║    ✓ Auto-detecção de cabeçalhos Excel                  ║
     echo ║                                                            ║
     echo ║  ELE NÃO PRECISA DE NADA INSTALADO!                     ║
     echo ║    ✗ Python                                              ║
