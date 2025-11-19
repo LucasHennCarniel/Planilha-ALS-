@@ -902,6 +902,7 @@ class SistemaManutencao:
         ttk.Button(frame_acoes, text="🚛  Veículos", command=self.gerenciar_veiculos).pack(side=tk.LEFT, padx=5)
         ttk.Button(frame_acoes, text="📊  Relatório", command=self.gerar_relatorio).pack(side=tk.LEFT, padx=5)
         ttk.Button(frame_acoes, text="📤  Exportar", command=self.exportar_excel).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_acoes, text="📥  Importar", command=self.importar_dados).pack(side=tk.LEFT, padx=5)
         
         # ==== NOTEBOOK (ABAS) ====
         self.notebook = ttk.Notebook(self.root)
@@ -1674,6 +1675,222 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                 messagebox.showinfo("Sucesso", f"Dados exportados para:\n{arquivo}")
         except Exception as e:
             messagebox.showerror("Erro", f"Erro ao exportar: {e}")
+    
+    
+    def importar_dados(self):
+        """Importa dados de arquivo Excel para o banco SQLite"""
+        # Janela de opções
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Importar Dados")
+        dialog.geometry("500x350")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Centralizar
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (250)
+        y = (dialog.winfo_screenheight() // 2) - (175)
+        dialog.geometry(f"500x350+{x}+{y}")
+        
+        frame = ttk.Frame(dialog, padding="20")
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Label(
+            frame,
+            text="📥 Importar Dados do Excel",
+            font=('Arial', 14, 'bold')
+        ).pack(pady=(0, 15))
+        
+        ttk.Label(
+            frame,
+            text="Use esta função para importar registros antigos do Excel\npara o banco de dados SQLite.",
+            font=('Arial', 10),
+            justify=tk.CENTER
+        ).pack(pady=(0, 20))
+        
+        # Informações
+        info_frame = ttk.LabelFrame(frame, text="ℹ️ Importante", padding="10")
+        info_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        ttk.Label(
+            info_frame,
+            text="• O arquivo Excel deve ter as mesmas colunas da planilha original\n"
+                 "• Veículos e destinos serão cadastrados automaticamente\n"
+                 "• Um backup do banco atual será criado antes da importação\n"
+                 "• Registros duplicados serão ignorados",
+            font=('Arial', 9),
+            justify=tk.LEFT
+        ).pack(anchor=tk.W)
+        
+        def selecionar_arquivo():
+            arquivo = filedialog.askopenfilename(
+                title="Selecione o arquivo Excel",
+                filetypes=[("Excel", "*.xlsx *.xls"), ("Todos", "*.*")],
+                initialdir="data"
+            )
+            
+            if not arquivo:
+                return
+            
+            # Confirma importação
+            resposta = messagebox.askyesno(
+                "Confirmar Importação",
+                f"Deseja importar dados do arquivo:\n\n{os.path.basename(arquivo)}\n\n"
+                "⚠️ Um backup será criado automaticamente.",
+                parent=dialog
+            )
+            
+            if not resposta:
+                return
+            
+            try:
+                dialog.destroy()
+                
+                # Mostra progresso
+                progress_win = tk.Toplevel(self.root)
+                progress_win.title("Importando...")
+                progress_win.geometry("400x150")
+                progress_win.transient(self.root)
+                progress_win.grab_set()
+                
+                # Centraliza
+                progress_win.update_idletasks()
+                px = (progress_win.winfo_screenwidth() // 2) - 200
+                py = (progress_win.winfo_screenheight() // 2) - 75
+                progress_win.geometry(f"400x150+{px}+{py}")
+                
+                ttk.Label(
+                    progress_win,
+                    text="📥 Importando dados...",
+                    font=('Arial', 12, 'bold')
+                ).pack(pady=20)
+                
+                label_status = ttk.Label(progress_win, text="Lendo arquivo Excel...", font=('Arial', 10))
+                label_status.pack(pady=10)
+                
+                progress_win.update()
+                
+                # Lê Excel
+                df_excel = pd.read_excel(arquivo)
+                label_status.config(text=f"Encontrados {len(df_excel)} registros")
+                progress_win.update()
+                
+                # Faz backup do banco atual
+                import shutil
+                backup_path = f"backup/database_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+                os.makedirs('backup', exist_ok=True)
+                shutil.copy2('data/sistema_als.db', backup_path)
+                
+                label_status.config(text="Importando para o banco...")
+                progress_win.update()
+                
+                # Importa dados
+                cursor = self.db.conn.cursor()
+                contador = 0
+                erros = 0
+                
+                for idx, row in df_excel.iterrows():
+                    try:
+                        cursor.execute("""
+                            INSERT OR IGNORE INTO manutencoes (
+                                DATA, PLACA, KM, [VEÍCULO], [DESTINO PROGRAMADO],
+                                [SERVIÇO A EXECUTAR], STATUS, [DATA ENTRADA], [DATA SAÍDA],
+                                [TOTAL DE DIAS EM MANUTENÇÃO], [NR° OF], OBS, data_criacao
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            str(row.get('DATA', '')),
+                            str(row.get('PLACA', '')),
+                            float(row.get('KM', 0)) if pd.notna(row.get('KM')) else 0,
+                            str(row.get('VEÍCULO', '')),
+                            str(row.get('DESTINO PROGRAMADO', '')),
+                            str(row.get('SERVIÇO A EXECUTAR', '')),
+                            str(row.get('STATUS', '')),
+                            str(row.get('DATA ENTRADA', '')),
+                            str(row.get('DATA SAÍDA', '')),
+                            int(row.get('TOTAL DE DIAS EM MANUTENÇÃO', 0)) if pd.notna(row.get('TOTAL DE DIAS EM MANUTENÇÃO')) else 0,
+                            str(row.get('NR° OF', '')),
+                            str(row.get('OBS', '')),
+                            datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        ))
+                        contador += 1
+                    except Exception as e:
+                        erros += 1
+                        print(f"Erro no registro {idx}: {e}")
+                
+                # Auto-cadastra veículos
+                cursor.execute("""
+                    INSERT OR IGNORE INTO veiculos (PLACA, TIPO_VEICULO, DESCRICAO, STATUS, data_criacao)
+                    SELECT DISTINCT 
+                        PLACA,
+                        [VEÍCULO],
+                        'Importado do Excel',
+                        'ATIVO',
+                        ?
+                    FROM manutencoes
+                    WHERE PLACA IS NOT NULL AND PLACA != ''
+                """, (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),))
+                
+                veiculos_novos = cursor.rowcount
+                
+                # Auto-cadastra destinos
+                cursor.execute("""
+                    INSERT OR IGNORE INTO destinos (NOME, STATUS, data_criacao)
+                    SELECT DISTINCT 
+                        [DESTINO PROGRAMADO],
+                        'ATIVO',
+                        ?
+                    FROM manutencoes
+                    WHERE [DESTINO PROGRAMADO] IS NOT NULL AND [DESTINO PROGRAMADO] != ''
+                """, (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),))
+                
+                destinos_novos = cursor.rowcount
+                
+                self.db.conn.commit()
+                
+                progress_win.destroy()
+                
+                # Atualiza interface
+                self.db.carregar_dados()
+                self.atualizar_tabela()
+                self.atualizar_estatisticas()
+                
+                # Mostra resultado
+                messagebox.showinfo(
+                    "Importação Concluída",
+                    f"✅ Importação concluída com sucesso!\n\n"
+                    f"📊 Registros importados: {contador}\n"
+                    f"⚠️ Erros/duplicados: {erros}\n"
+                    f"🚛 Veículos cadastrados: {veiculos_novos}\n"
+                    f"📍 Destinos cadastrados: {destinos_novos}\n\n"
+                    f"💾 Backup salvo em:\n{backup_path}"
+                )
+                
+            except Exception as e:
+                if 'progress_win' in locals():
+                    progress_win.destroy()
+                messagebox.showerror(
+                    "Erro na Importação",
+                    f"Erro ao importar dados:\n\n{str(e)}",
+                    parent=dialog if dialog.winfo_exists() else self.root
+                )
+        
+        # Botões
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(pady=20)
+        
+        ttk.Button(
+            btn_frame,
+            text="📂  Selecionar Arquivo Excel",
+            command=selecionar_arquivo,
+            width=25
+        ).pack(pady=5)
+        
+        ttk.Button(
+            btn_frame,
+            text="❌  Cancelar",
+            command=dialog.destroy,
+            width=25
+        ).pack(pady=5)
     
     
     def fechar_aplicacao(self):
