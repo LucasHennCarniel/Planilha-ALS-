@@ -5,3 +5,4 @@ pyinstaller>=6.0.0
 pillow>=10.0.0
 python-docx>=1.1.0
 reportlab>=4.0.0
+# sqlite3 já vem incluído no Python (não precisa instalar)

@@ -24,6 +24,7 @@ from src.utils import formatar_data_br, validar_data, validar_numero, limpar_tex
 from src.veiculos import GerenciadorVeiculos
 from src.interface_veiculos import JanelaCadastroVeiculos
 from src.destinos import GerenciadorDestinos
+from src.importador import ImportadorDados
 
 
 class FormularioRegistro(tk.Toplevel):
@@ -623,6 +624,7 @@ class SistemaManutencao:
         ttk.Button(frame_acoes, text="🚛  Veículos", command=self.gerenciar_veiculos).pack(side=tk.LEFT, padx=5)
         ttk.Button(frame_acoes, text="📊  Relatório", command=self.gerar_relatorio).pack(side=tk.LEFT, padx=5)
         ttk.Button(frame_acoes, text="📤  Exportar", command=self.exportar_excel).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_acoes, text="📥  Importar", command=self.importar_dados).pack(side=tk.LEFT, padx=5)
         
         # ==== FRAME TABELA ====
         frame_tabela = ttk.Frame(self.root, padding="10")
@@ -1070,6 +1072,186 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                 messagebox.showinfo("Sucesso", f"Dados exportados para:\n{arquivo}")
             except Exception as e:
                 messagebox.showerror("Erro", f"Não foi possível exportar:\n{e}")
+    
+    
+    def importar_dados(self):
+        """
+        Importa dados de uma planilha Excel externa
+        """
+        # Seleciona arquivo
+        arquivo = filedialog.askopenfilename(
+            title="Selecione a planilha para importar",
+            filetypes=[
+                ("Excel files", "*.xlsx *.xls"),
+                ("All files", "*.*")
+            ]
+        )
+        
+        if not arquivo:
+            return
+        
+        # Cria janela de opções de importação
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Opções de Importação")
+        dialog.geometry("500x350")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Centraliza
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - 250
+        y = (dialog.winfo_screenheight() // 2) - 175
+        dialog.geometry(f"500x350+{x}+{y}")
+        
+        # Frame principal
+        frame = ttk.Frame(dialog, padding="20")
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Título
+        ttk.Label(
+            frame,
+            text="📥 Importar Dados de Planilha",
+            font=('Arial', 14, 'bold')
+        ).pack(pady=(0, 10))
+        
+        # Mostra arquivo selecionado
+        ttk.Label(
+            frame,
+            text=f"Arquivo selecionado:",
+            font=('Arial', 9, 'bold')
+        ).pack(anchor=tk.W, pady=(10, 0))
+        
+        ttk.Label(
+            frame,
+            text=os.path.basename(arquivo),
+            font=('Arial', 9),
+            foreground='blue'
+        ).pack(anchor=tk.W, pady=(0, 15))
+        
+        # Opções de modo
+        ttk.Label(
+            frame,
+            text="Escolha o modo de importação:",
+            font=('Arial', 10, 'bold')
+        ).pack(anchor=tk.W, pady=(10, 10))
+        
+        modo_var = tk.StringVar(value='adicionar')
+        
+        # Opção 1: Adicionar (recomendado)
+        frame_opt1 = ttk.Frame(frame)
+        frame_opt1.pack(fill=tk.X, pady=5)
+        
+        ttk.Radiobutton(
+            frame_opt1,
+            text="➕ Adicionar Registros Novos (Recomendado)",
+            variable=modo_var,
+            value='adicionar'
+        ).pack(anchor=tk.W)
+        
+        ttk.Label(
+            frame_opt1,
+            text="   → Adiciona apenas registros que não existem no sistema.\n   → Ignora duplicatas (mesma PLACA + DATA).",
+            font=('Arial', 8),
+            foreground='gray'
+        ).pack(anchor=tk.W, padx=(20, 0))
+        
+        # Opção 2: Mesclar
+        frame_opt2 = ttk.Frame(frame)
+        frame_opt2.pack(fill=tk.X, pady=5)
+        
+        ttk.Radiobutton(
+            frame_opt2,
+            text="🔄 Mesclar (Adicionar + Atualizar)",
+            variable=modo_var,
+            value='mesclar'
+        ).pack(anchor=tk.W)
+        
+        ttk.Label(
+            frame_opt2,
+            text="   → Adiciona registros novos.\n   → Atualiza registros existentes com novos dados.",
+            font=('Arial', 8),
+            foreground='gray'
+        ).pack(anchor=tk.W, padx=(20, 0))
+        
+        # Opção 3: Sobrescrever (CUIDADO)
+        frame_opt3 = ttk.Frame(frame)
+        frame_opt3.pack(fill=tk.X, pady=5)
+        
+        ttk.Radiobutton(
+            frame_opt3,
+            text="⚠️ Sobrescrever Tudo (CUIDADO!)",
+            variable=modo_var,
+            value='sobrescrever'
+        ).pack(anchor=tk.W)
+        
+        ttk.Label(
+            frame_opt3,
+            text="   → APAGA TODOS os dados atuais.\n   → Substitui com dados da planilha importada.",
+            font=('Arial', 8),
+            foreground='red'
+        ).pack(anchor=tk.W, padx=(20, 0))
+        
+        # Frame de botões
+        frame_botoes = ttk.Frame(frame)
+        frame_botoes.pack(pady=20)
+        
+        def confirmar_importacao():
+            modo = modo_var.get()
+            
+            # Confirmação extra para sobrescrever
+            if modo == 'sobrescrever':
+                resposta = messagebox.askyesno(
+                    "⚠️ ATENÇÃO",
+                    "TODOS OS DADOS ATUAIS SERÃO APAGADOS!\n\n"
+                    "Um backup será criado, mas você tem certeza?",
+                    icon='warning',
+                    parent=dialog
+                )
+                if not resposta:
+                    return
+            
+            dialog.destroy()
+            
+            # Executa importação
+            self.label_status.config(text="⏳ Importando dados...")
+            self.root.update()
+            
+            try:
+                importador = ImportadorDados(self.db)
+                sucesso, mensagem = importador.importar_planilha(arquivo, modo=modo)
+                
+                if sucesso:
+                    messagebox.showinfo("✅ Importação Concluída", mensagem)
+                    self.atualizar_tabela()
+                    self.atualizar_estatisticas()
+                    self.label_status.config(text="✅ Dados importados com sucesso!")
+                else:
+                    messagebox.showerror("❌ Erro na Importação", mensagem)
+                    self.label_status.config(text="❌ Erro ao importar dados")
+                    
+            except Exception as e:
+                messagebox.showerror(
+                    "Erro",
+                    f"Erro inesperado durante importação:\n{e}"
+                )
+                self.label_status.config(text="❌ Erro ao importar")
+        
+        def cancelar_importacao():
+            dialog.destroy()
+        
+        ttk.Button(
+            frame_botoes,
+            text="📥  Importar",
+            command=confirmar_importacao,
+            width=15
+        ).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(
+            frame_botoes,
+            text="❌  Cancelar",
+            command=cancelar_importacao,
+            width=15
+        ).pack(side=tk.LEFT, padx=5)
     
     
     def fechar_aplicacao(self):

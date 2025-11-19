@@ -1,8 +1,10 @@
 """
-Gerenciamento de dados e persistência
+Gerenciamento de dados e persistência - SQLite Integrado
 """
+import sqlite3
 import pandas as pd
 import os
+import shutil
 from datetime import datetime
 from .utils import (
     calcular_dias_manutencao, 
@@ -14,12 +16,15 @@ from .utils import (
 
 class DatabaseManager:
     """
-    Gerencia operações de banco de dados (Excel)
+    Gerencia operações de banco de dados com SQLite
+    Interface compatível com código existente (usa DataFrame)
     """
     
-    def __init__(self, arquivo_excel='data/PROGRAMAÇÃO MANUTENÇÃO (CÓPIA 2).xlsx'):
-        self.arquivo = arquivo_excel
-        self.df = None
+    def __init__(self, db_path='data/sistema_als.db'):
+        self.db_path = db_path
+        self.conn = None
+        self.df = None  # Mantém compatibilidade com código existente
+        
         self.colunas_obrigatorias = [
             'DATA', 'PLACA', 'KM', 'VEÍCULO', 'DESTINO PROGRAMADO',
             'SERVIÇO A EXECUTAR', 'STATUS', 'DATA ENTRADA', 'DATA SAÍDA',
@@ -31,64 +36,146 @@ class DatabaseManager:
         os.makedirs('output', exist_ok=True)
         os.makedirs('backup', exist_ok=True)
         
+        self.conectar()
+        self.criar_tabelas()
         self.carregar_dados()
+    
+    
+    def conectar(self):
+        """Conecta ao banco SQLite"""
+        try:
+            self.conn = sqlite3.connect(self.db_path)
+            self.conn.execute("PRAGMA foreign_keys = ON")
+            return True
+        except Exception as e:
+            print(f"❌ Erro ao conectar: {e}")
+            return False
+    
+    
+    def criar_tabelas(self):
+        """Cria tabelas se não existirem"""
+        try:
+            cursor = self.conn.cursor()
+            
+            # Tabela MANUTENÇÕES (estrutura idêntica ao Excel)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS manutencoes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    data TEXT NOT NULL,
+                    placa TEXT NOT NULL,
+                    km INTEGER,
+                    veiculo TEXT,
+                    destino_programado TEXT,
+                    servico_executar TEXT,
+                    status TEXT,
+                    data_entrada TEXT,
+                    data_saida TEXT,
+                    total_dias_manutencao INTEGER,
+                    nr_of TEXT,
+                    obs TEXT,
+                    UNIQUE(placa, data)
+                )
+            """)
+            
+            # Índices para performance
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_placa ON manutencoes(placa)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_data ON manutencoes(data)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_status ON manutencoes(status)")
+            
+            self.conn.commit()
+            return True
+        except Exception as e:
+            print(f"❌ Erro ao criar tabelas: {e}")
+            return False
     
     
     def carregar_dados(self):
         """
-        Carrega dados do Excel ou cria novo arquivo
+        Carrega dados do SQLite para DataFrame (compatibilidade)
         """
         try:
-            if os.path.exists(self.arquivo):
-                # Tenta ler da primeira aba
-                self.df = pd.read_excel(self.arquivo, sheet_name=0)
+            # Lê do SQLite
+            query = "SELECT * FROM manutencoes ORDER BY data DESC"
+            self.df = pd.read_sql_query(query, self.conn)
+            
+            # Renomeia colunas para formato Excel (maiúsculas com acentos)
+            if not self.df.empty:
+                self.df = self.df.rename(columns={
+                    'data': 'DATA',
+                    'placa': 'PLACA',
+                    'km': 'KM',
+                    'veiculo': 'VEÍCULO',
+                    'destino_programado': 'DESTINO PROGRAMADO',
+                    'servico_executar': 'SERVIÇO A EXECUTAR',
+                    'status': 'STATUS',
+                    'data_entrada': 'DATA ENTRADA',
+                    'data_saida': 'DATA SAÍDA',
+                    'total_dias_manutencao': 'TOTAL DE DIAS EM MANUTENÇÃO',
+                    'nr_of': 'NR° OF',
+                    'obs': 'OBS'
+                })
                 
-                # Remove linhas completamente vazias
-                self.df = self.df.dropna(how='all')
+                # Remove coluna ID (compatibilidade)
+                if 'id' in self.df.columns:
+                    self.df = self.df.drop(columns=['id'])
                 
-                # Garante que todas as colunas existem
-                for col in self.colunas_obrigatorias:
-                    if col not in self.df.columns:
-                        self.df[col] = ''
-                
-                # Limpa dados
                 self.df = self.df.fillna('')
-                
-                # *** FILTRO IMPORTANTE: Remove registros sem PLACA (linhas vazias) ***
-                self.df = self.df[self.df['PLACA'].astype(str).str.strip() != '']
-                
-                # Reset do índice após filtrar
-                self.df = self.df.reset_index(drop=True)
-                
             else:
-                # Cria DataFrame vazio com colunas obrigatórias
+                # Cria DataFrame vazio
                 self.df = pd.DataFrame(columns=self.colunas_obrigatorias)
                 
         except Exception as e:
-            # Cria DataFrame vazio em caso de erro
+            print(f"Aviso: {e}")
             self.df = pd.DataFrame(columns=self.colunas_obrigatorias)
     
     
     def salvar_dados(self):
         """
-        Salva dados no Excel com backup
+        Salva dados do DataFrame no SQLite com backup
         """
         try:
-            # Faz backup antes de salvar
-            if os.path.exists(self.arquivo):
+            # Faz backup do banco
+            if os.path.exists(self.db_path):
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                backup_file = f'backup/backup_{timestamp}.xlsx'
-                import shutil
-                shutil.copy2(self.arquivo, backup_file)
+                backup_file = f'backup/database_backup_{timestamp}.db'
+                shutil.copy2(self.db_path, backup_file)
             
-            # Recalcula campos automáticos antes de salvar
+            # Recalcula campos automáticos
             self.recalcular_campos()
             
-            # Salva o arquivo
-            self.df.to_excel(self.arquivo, index=False, sheet_name='PROGRAMAÇÃO')
+            # Limpa tabela
+            cursor = self.conn.cursor()
+            cursor.execute("DELETE FROM manutencoes")
+            
+            # Insere dados do DataFrame
+            for _, row in self.df.iterrows():
+                cursor.execute("""
+                    INSERT INTO manutencoes (
+                        data, placa, km, veiculo, destino_programado,
+                        servico_executar, status, data_entrada, data_saida,
+                        total_dias_manutencao, nr_of, obs
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    row.get('DATA', ''),
+                    row.get('PLACA', ''),
+                    row.get('KM', 0),
+                    row.get('VEÍCULO', ''),
+                    row.get('DESTINO PROGRAMADO', ''),
+                    row.get('SERVIÇO A EXECUTAR', ''),
+                    row.get('STATUS', ''),
+                    row.get('DATA ENTRADA', ''),
+                    row.get('DATA SAÍDA', ''),
+                    row.get('TOTAL DE DIAS EM MANUTENÇÃO', 0),
+                    row.get('NR° OF', ''),
+                    row.get('OBS', '')
+                ))
+            
+            self.conn.commit()
             return True
             
         except Exception as e:
+            print(f"❌ Erro ao salvar: {e}")
+            self.conn.rollback()
             return False
     
     
