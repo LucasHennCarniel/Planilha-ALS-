@@ -15,10 +15,15 @@ from PIL import Image, ImageTk
 if getattr(sys, 'frozen', False):
     # Se estiver rodando como executável
     application_path = sys._MEIPASS
+    base_path = os.path.dirname(sys.executable)
 else:
     application_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base_path = application_path
 
 sys.path.insert(0, application_path)
+
+# Define caminho absoluto para o banco de dados
+DB_PATH = os.path.join(base_path, 'data', 'sistema_als.db')
 
 from src.database import DatabaseManager
 from src.utils import formatar_data_br, validar_data, validar_numero, limpar_texto, gerar_relatorio_pdf, gerar_relatorio_word
@@ -738,7 +743,7 @@ class SistemaManutencao:
         
         # Inicializa banco de dados
         try:
-            self.db = DatabaseManager()
+            self.db = DatabaseManager(DB_PATH)
         except Exception as e:
             messagebox.showerror(
                 "Erro ao Inicializar",
@@ -748,13 +753,13 @@ class SistemaManutencao:
         
         # Inicializa gerenciador de veículos
         try:
-            self.gerenciador_veiculos = GerenciadorVeiculos()
+            self.gerenciador_veiculos = GerenciadorVeiculos(DB_PATH)
         except Exception as e:
             messagebox.showerror(
                 "Erro ao Inicializar",
                 f"Não foi possível carregar o cadastro de veículos:\n{e}"
             )
-            self.gerenciador_veiculos = GerenciadorVeiculos()  # Cria novo vazio
+            self.gerenciador_veiculos = GerenciadorVeiculos(DB_PATH)  # Cria novo vazio
         
         # Inicializa gerenciador de destinos
         try:

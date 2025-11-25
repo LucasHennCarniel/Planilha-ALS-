@@ -165,7 +165,7 @@ class GerenciadorVeiculos:
                 }
             return None
         except Exception as e:
-            print(f"❌ Erro: {e}")
+            print(f" Erro: {e}")
             return None
     
     
@@ -184,18 +184,6 @@ class GerenciadorVeiculos:
             lista.append(texto)
         
         return lista
-    
-    
-    def obter_veiculos_completos(self):
-        """
-        Retorna lista completa de veículos ativos como dicionários
-        Útil para busca e filtragem
-        """
-        if self.df.empty:
-            return []
-        
-        veiculos_ativos = self.df[self.df['ATIVO'] == True].copy()
-        return veiculos_ativos.to_dict('records')
     
     
     def obter_veiculos_por_tipo(self, tipo):
@@ -259,10 +247,22 @@ class GerenciadorVeiculos:
             cursor.execute("SELECT COUNT(*) FROM veiculos")
             total = cursor.fetchone()[0]
             
+            # Estatísticas por tipo
+            cursor.execute("""
+                SELECT tipo_veiculo, COUNT(*) 
+                FROM veiculos 
+                WHERE ativo = 1 
+                GROUP BY tipo_veiculo 
+                ORDER BY COUNT(*) DESC
+            """)
+            por_tipo = dict(cursor.fetchall())
+            
             return {
                 'total': total,
                 'ativos': ativos,
-                'inativos': total - ativos
+                'inativos': total - ativos,
+                'por_tipo': por_tipo
             }
-        except:
-            return {'total': 0, 'ativos': 0, 'inativos': 0}
+        except Exception as e:
+            print(f"Erro ao obter estatísticas: {e}")
+            return {'total': 0, 'ativos': 0, 'inativos': 0, 'por_tipo': {}}

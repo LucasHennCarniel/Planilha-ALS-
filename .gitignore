@@ -30,6 +30,11 @@ desktop.ini
 backup/
 output/
 
+# Executáveis gerados
+SistemaALS/
+SistemaALS_ParaSeuPai/
+*.exe
+
 # Planilhas temporárias
 ~$*.xlsx
 *.tmp
