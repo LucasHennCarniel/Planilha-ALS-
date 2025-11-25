@@ -170,7 +170,7 @@ class GerenciadorVeiculos:
     
     
     def obter_veiculos_ativos(self):
-        """Retorna lista de veículos ativos formatada"""
+        """Retorna lista de veículos ativos formatada: PLACA - TIPO - DESCRIÇÃO"""
         if self.df.empty:
             return []
         
@@ -178,9 +178,10 @@ class GerenciadorVeiculos:
         
         lista = []
         for _, row in veiculos_ativos.iterrows():
-            texto = f"{row['TIPO_VEICULO']} - {row['PLACA']}"
+            # Formato: PLACA - TIPO - DESCRIÇÃO
+            texto = f"{row['PLACA']} - {row['TIPO_VEICULO']}"
             if row['DESCRICAO']:
-                texto += f" ({row['DESCRICAO']})"
+                texto += f" - {row['DESCRICAO']}"
             lista.append(texto)
         
         return lista
@@ -205,16 +206,11 @@ class GerenciadorVeiculos:
     
     
     def extrair_placa_da_selecao(self, texto_selecao):
-        """Extrai a placa do texto selecionado"""
+        """Extrai a placa do texto selecionado (formato: PLACA - TIPO - DESCRIÇÃO)"""
         if ' - ' in texto_selecao:
-            partes = texto_selecao.split(' - ')
-            if len(partes) >= 2:
-                # Se começa com tipo de veículo, pega segunda parte
-                if partes[0] in ['CAVALO', 'CARRETA 1', 'CARRETA 2', 'BUG 1', 'BUG 2', 'LS', 'INDEFINIDO']:
-                    placa = partes[1].split(' ')[0]  # Pega primeira palavra (a placa)
-                else:
-                    placa = partes[0]
-                return placa.strip()
+            # Como a placa agora é a primeira parte, basta pegar antes do primeiro " - "
+            placa = texto_selecao.split(' - ')[0].strip()
+            return placa
         return texto_selecao.strip()
     
     

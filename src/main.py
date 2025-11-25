@@ -335,7 +335,7 @@ class FormularioRegistro(tk.Toplevel):
     
     
     def selecionar_veiculo_lista(self):
-        """Seleciona veículo da listbox"""
+        """Seleciona veículo da listbox e preenche campos automaticamente"""
         selecao = self.listbox_veiculos.curselection()
         if selecao:
             veiculo_texto = self.listbox_veiculos.get(selecao[0])
@@ -344,8 +344,32 @@ class FormularioRegistro(tk.Toplevel):
             self.veiculo_selecionado = veiculo_texto
             self.esconder_resultados()
             
-            # Preenche dados automaticamente
-            self.ao_selecionar_veiculo()
+            # Extrai placa do texto selecionado (formato: PLACA - TIPO - DESCRIÇÃO)
+            placa = self.gerenciador_veiculos.extrair_placa_da_selecao(veiculo_texto)
+            
+            # Busca dados completos do veículo
+            veiculo = self.gerenciador_veiculos.obter_veiculo_por_placa(placa)
+            
+            if veiculo:
+                # Preenche PLACA automaticamente
+                self.campos['PLACA'].config(state='normal')
+                self.campos['PLACA'].delete(0, tk.END)
+                self.campos['PLACA'].insert(0, veiculo['PLACA'])
+                self.campos['PLACA'].config(state='readonly')
+                
+                # Preenche TIPO automaticamente
+                self.campos['VEÍCULO'].config(state='normal')
+                self.campos['VEÍCULO'].delete(0, tk.END)
+                self.campos['VEÍCULO'].insert(0, veiculo['TIPO_VEICULO'])
+                self.campos['VEÍCULO'].config(state='readonly')
+                
+                # Preenche KM com última KM registrada
+                self.campos['KM'].delete(0, tk.END)
+                ultima_km = veiculo.get('ULTIMA_KM', 0)
+                self.campos['KM'].insert(0, str(ultima_km))
+                
+                # Foca no campo DATA para continuar preenchimento
+                self.campos['DATA'].focus()
     
     
     def navegar_lista(self, direcao):
