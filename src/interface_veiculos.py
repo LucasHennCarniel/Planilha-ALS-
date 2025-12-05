@@ -60,6 +60,22 @@ class JanelaCadastroVeiculos(tk.Toplevel):
             command=self.salvar_dados
         ).pack(side=tk.RIGHT, padx=5)
         
+        # Frame pesquisa
+        frame_pesquisa = ttk.Frame(self, padding="10")
+        frame_pesquisa.pack(fill=tk.X)
+        
+        ttk.Label(frame_pesquisa, text="🔍 Pesquisar:").pack(side=tk.LEFT, padx=(0,5))
+        
+        self.entrada_pesquisa = ttk.Entry(frame_pesquisa, width=30)
+        self.entrada_pesquisa.pack(side=tk.LEFT, padx=5)
+        self.entrada_pesquisa.bind('<KeyRelease>', lambda e: self.filtrar_veiculos())
+        
+        ttk.Button(
+            frame_pesquisa,
+            text="Limpar",
+            command=self.limpar_pesquisa
+        ).pack(side=tk.LEFT, padx=5)
+        
         # Frame estatísticas
         frame_stats = ttk.Frame(self, padding="10")
         frame_stats.pack(fill=tk.X)
@@ -215,7 +231,62 @@ class JanelaCadastroVeiculos(tk.Toplevel):
             messagebox.showinfo("Sucesso", "Cadastro de veículos salvo com sucesso!")
         else:
             messagebox.showerror("Erro", "Não foi possível salvar o cadastro")
-
+        
+    
+    def filtrar_veiculos(self):
+        """
+        Filtra veículos conforme texto digitado na pesquisa
+        """
+        termo = self.entrada_pesquisa.get().upper().strip()
+        
+        # Limpa tabela
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        # Se não há termo, mostra todos
+        df = self.gerenciador.df
+        if not termo:
+            self.atualizar_tabela()
+            return
+        
+        # Filtra por placa, tipo ou descrição
+        df_filtrado = df[
+            df['PLACA'].str.upper().str.contains(termo, na=False) |
+            df['TIPO_VEICULO'].str.upper().str.contains(termo, na=False) |
+            df['DESCRICAO'].str.upper().str.contains(termo, na=False)
+        ]
+        
+        if df_filtrado.empty:
+            self.label_stats.config(text="❌ Nenhum veículo encontrado")
+            return
+        
+        # Popula tabela filtrada
+        for idx, row in df_filtrado.iterrows():
+            valores = [
+                row.get('TIPO_VEICULO', ''),
+                row.get('PLACA', ''),
+                row.get('DESCRICAO', ''),
+                row.get('ULTIMA_KM', '0'),
+                row.get('DATA_CADASTRO', ''),
+                'ATIVO' if row.get('ATIVO', False) else 'INATIVO'
+            ]
+            
+            tag = 'ativo' if row.get('ATIVO', False) else 'inativo'
+            self.tree.insert('', tk.END, values=valores, tags=(idx, tag))
+        
+        # Atualiza estatísticas
+        self.label_stats.config(
+            text=f"🔍 {len(df_filtrado)} veículo(s) encontrado(s) de {len(df)} total"
+        )
+    
+    
+    def limpar_pesquisa(self):
+        """
+        Limpa o campo de pesquisa e mostra todos os veículos
+        """
+        self.entrada_pesquisa.delete(0, tk.END)
+        self.atualizar_tabela()
+        
 
 class FormularioVeiculo(tk.Toplevel):
     """

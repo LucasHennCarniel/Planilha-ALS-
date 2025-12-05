@@ -86,6 +86,11 @@ copy "dist\SistemaManutencaoALS.exe" "%PASTA_DIST%\" >nul
 xcopy "dist\data" "%PASTA_DIST%\data\" /E /I /Y >nul
 xcopy "dist\img" "%PASTA_DIST%\img\" /E /I /Y >nul
 
+REM Cria pastas necessárias para o sistema funcionar
+mkdir "%PASTA_DIST%\backup" 2>nul
+mkdir "%PASTA_DIST%\output" 2>nul
+echo ✅ Pastas backup e output criadas
+
 REM Cria arquivo de instruções simples
 echo SISTEMA DE MANUTENÇÃO ALS > "%PASTA_DIST%\LEIA-ME.txt"
 echo. >> "%PASTA_DIST%\LEIA-ME.txt"

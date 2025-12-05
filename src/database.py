@@ -147,121 +147,227 @@ class DatabaseManager:
     
     def salvar_dados(self):
         """
-        Salva dados do DataFrame no SQLite com backup
+        Garante que dados estão salvos - JÁ SALVAMOS NO ADICIONAR/ATUALIZAR
+        Apenas faz commit final e backup
         """
         try:
-            # Faz backup do banco
-            if os.path.exists(self.db_path):
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                backup_file = f'backup/database_backup_{timestamp}.db'
-                shutil.copy2(self.db_path, backup_file)
-            
-            # Recalcula campos automáticos
-            self.recalcular_campos()
-            
-            # Limpa tabela
-            cursor = self.conn.cursor()
-            cursor.execute("DELETE FROM manutencoes")
-            
-            # Insere dados do DataFrame
-            for _, row in self.df.iterrows():
-                cursor.execute("""
-                    INSERT INTO manutencoes (
-                        data, placa, km, veiculo, destino_programado,
-                        servico_executar, status, data_entrada, data_saida,
-                        total_dias_manutencao, nr_of, obs
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    row.get('DATA', ''),
-                    row.get('PLACA', ''),
-                    row.get('KM', 0),
-                    row.get('VEÍCULO', ''),
-                    row.get('DESTINO PROGRAMADO', ''),
-                    row.get('SERVIÇO A EXECUTAR', ''),
-                    row.get('STATUS', ''),
-                    row.get('DATA ENTRADA', ''),
-                    row.get('DATA SAÍDA', ''),
-                    row.get('TOTAL DE DIAS EM MANUTENÇÃO', 0),
-                    row.get('NR° OF', ''),
-                    row.get('OBS', '')
-                ))
-            
+            # Commit final (garantia)
             self.conn.commit()
+            
+            # Faz backup do banco (apenas a cada hora para não lotar)
+            if os.path.exists(self.db_path):
+                backup_dir = 'backup'
+                # Verifica último backup
+                backups = [f for f in os.listdir(backup_dir) if f.startswith('database_backup_')]
+                fazer_backup = True
+                
+                if backups:
+                    ultimo_backup = max(backups)
+                    # Extrai timestamp do nome
+                    try:
+                        timestamp_str = ultimo_backup.replace('database_backup_', '').replace('.db', '')
+                        ultimo_timestamp = datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S')
+                        # Só faz backup se passou mais de 1 hora
+                        if (datetime.now() - ultimo_timestamp).seconds < 3600:
+                            fazer_backup = False
+                    except:
+                        pass
+                
+                if fazer_backup:
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    backup_file = f'{backup_dir}/database_backup_{timestamp}.db'
+                    shutil.copy2(self.db_path, backup_file)
+            
             return True
             
         except Exception as e:
             print(f"❌ Erro ao salvar: {e}")
-            self.conn.rollback()
             return False
     
     
     def recalcular_campos(self):
         """
-        Recalcula campos automáticos (dias, status)
+        Recalcula APENAS campos automáticos (dias em manutenção)
+        NÃO sobrescreve status escolhido pelo usuário
+        ATUALIZA NO SQLITE TAMBÉM
         """
-        for idx, row in self.df.iterrows():
-            # Calcula dias em manutenção
-            dias = calcular_dias_manutencao(
-                row.get('DATA ENTRADA'), 
-                row.get('DATA SAÍDA')
-            )
-            self.df.at[idx, 'TOTAL DE DIAS EM MANUTENÇÃO'] = dias
+        try:
+            cursor = self.conn.cursor()
             
-            # Atualiza status
-            status = calcular_status(
-                row.get('DATA ENTRADA'),
-                row.get('DATA SAÍDA'),
-                row.get('STATUS', '')
-            )
-            self.df.at[idx, 'STATUS'] = status
+            for idx, row in self.df.iterrows():
+                placa = row['PLACA']
+                data = row['DATA']
+                
+                # Calcula dias em manutenção
+                dias = calcular_dias_manutencao(
+                    row.get('DATA ENTRADA'), 
+                    row.get('DATA SAÍDA')
+                )
+                self.df.at[idx, 'TOTAL DE DIAS EM MANUTENÇÃO'] = dias
+                
+                # Atualiza dias no SQLite
+                cursor.execute("""
+                    UPDATE manutencoes 
+                    SET total_dias_manutencao = ? 
+                    WHERE placa = ? AND data = ?
+                """, (dias, placa, data))
+                
+                # NÃO recalcula status - mantém o que o usuário escolheu
+                # Se o status estiver vazio, aí sim calcula
+                if not row.get('STATUS') or pd.isna(row.get('STATUS')) or row.get('STATUS') == '':
+                    status = calcular_status(
+                        row.get('DATA ENTRADA'),
+                        row.get('DATA SAÍDA'),
+                        ''
+                    )
+                    self.df.at[idx, 'STATUS'] = status
+                    
+                    # Atualiza status no SQLite
+                    cursor.execute("""
+                        UPDATE manutencoes 
+                        SET status = ? 
+                        WHERE placa = ? AND data = ?
+                    """, (status, placa, data))
+            
+            # Commit todas as atualizações
+            self.conn.commit()
+            
+        except Exception as e:
+            self.conn.rollback()
+            print(f"❌ Erro ao recalcular campos: {e}")
     
     
     def adicionar_registro(self, dados):
         """
-        Adiciona novo registro
+        Adiciona novo registro - SALVA NO BANCO PRIMEIRO
         """
         try:
-            # Garante que todos os campos existem
-            registro = {}
-            for col in self.colunas_obrigatorias:
-                registro[col] = dados.get(col, '')
+            # 1. SALVA NO SQLITE PRIMEIRO
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO manutencoes (
+                    data, placa, km, veiculo, destino_programado,
+                    servico_executar, status, data_entrada, data_saida,
+                    total_dias_manutencao, nr_of, obs
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                dados.get('DATA', ''),
+                dados.get('PLACA', '').upper(),
+                dados.get('KM', 0),
+                dados.get('VEÍCULO', ''),
+                dados.get('DESTINO PROGRAMADO', ''),
+                dados.get('SERVIÇO A EXECUTAR', ''),
+                dados.get('STATUS', ''),
+                dados.get('DATA ENTRADA', ''),
+                dados.get('DATA SAÍDA', ''),
+                dados.get('TOTAL DE DIAS EM MANUTENÇÃO', 0),
+                dados.get('NR° OF', ''),
+                dados.get('OBS', '')
+            ))
             
-            # Cria DataFrame com novo registro
-            novo_registro = pd.DataFrame([registro])
+            # 2. COMMIT IMEDIATAMENTE
+            self.conn.commit()
             
-            # Adiciona ao DataFrame principal
-            self.df = pd.concat([self.df, novo_registro], ignore_index=True)
+            # 3. ATUALIZA DATAFRAME
+            self.carregar_dados()
             
             return True
             
         except Exception as e:
+            self.conn.rollback()
+            print(f"❌ Erro ao adicionar: {e}")
             return False
     
     
     def atualizar_registro(self, indice, dados):
         """
-        Atualiza registro existente
+        Atualiza registro existente - SALVA NO BANCO PRIMEIRO
+        PRIORIZA STATUS ESCOLHIDO PELO USUÁRIO
         """
         try:
+            # Pega placa e data para identificar o registro
+            placa = self.df.iloc[indice]['PLACA']
+            data = self.df.iloc[indice]['DATA']
+            
+            # IMPORTANTE: Se o usuário alterou o STATUS, essa mudança TEM PRIORIDADE
+            # Não recalcula status automaticamente durante uma edição
+            status_usuario = dados.get('STATUS', '').strip().upper()
+            
+            # 1. ATUALIZA NO SQLITE PRIMEIRO
+            cursor = self.conn.cursor()
+            
+            # Monta UPDATE dinâmico
+            campos_update = []
+            valores = []
+            
+            for chave, valor in dados.items():
+                # Mapeia nome da coluna
+                nome_coluna = chave.lower().replace(' ', '_').replace('°', '').replace('ç', 'c')
+                nome_coluna = nome_coluna.replace('destinoprogramado', 'destino_programado')
+                nome_coluna = nome_coluna.replace('servicoaexecutar', 'servico_executar')
+                nome_coluna = nome_coluna.replace('dataentrada', 'data_entrada')
+                nome_coluna = nome_coluna.replace('datasaida', 'data_saida')
+                nome_coluna = nome_coluna.replace('totaldedasemmanutencao', 'total_dias_manutencao')
+                nome_coluna = nome_coluna.replace('nr_of', 'nr_of')
+                
+                # GARANTIA: Se o usuário escolheu um STATUS, usa ele (não recalcula)
+                if chave == 'STATUS' and status_usuario:
+                    campos_update.append(f"{nome_coluna} = ?")
+                    valores.append(status_usuario)
+                else:
+                    campos_update.append(f"{nome_coluna} = ?")
+                    valores.append(valor)
+            
+            # Adiciona WHERE
+            valores.extend([placa, data])
+            
+            sql = f"UPDATE manutencoes SET {', '.join(campos_update)} WHERE placa = ? AND data = ?"
+            cursor.execute(sql, valores)
+            
+            # 2. COMMIT IMEDIATAMENTE
+            self.conn.commit()
+            
+            # 3. ATUALIZA DATAFRAME (mantém status do usuário)
             for chave, valor in dados.items():
                 if chave in self.df.columns:
-                    self.df.at[indice, chave] = valor
+                    # Garante que status do usuário é preservado
+                    if chave == 'STATUS' and status_usuario:
+                        self.df.at[indice, chave] = status_usuario
+                    else:
+                        self.df.at[indice, chave] = valor
             
             return True
             
         except Exception as e:
+            self.conn.rollback()
+            print(f"❌ Erro ao atualizar: {e}")
             return False
     
     
     def excluir_registro(self, indice):
         """
-        Exclui registro
+        Exclui registro - DELETA DO SQLITE PRIMEIRO
         """
         try:
+            # Pega placa e data para identificar o registro
+            placa = self.df.iloc[indice]['PLACA']
+            data = self.df.iloc[indice]['DATA']
+            
+            # 1. DELETA DO SQLITE PRIMEIRO
+            cursor = self.conn.cursor()
+            cursor.execute("DELETE FROM manutencoes WHERE placa = ? AND data = ?", (placa, data))
+            
+            # 2. COMMIT IMEDIATAMENTE
+            self.conn.commit()
+            
+            # 3. ATUALIZA DATAFRAME
             self.df = self.df.drop(indice).reset_index(drop=True)
+            
             return True
             
         except Exception as e:
+            self.conn.rollback()
+            print(f"❌ Erro ao excluir: {e}")
             return False
     
     
