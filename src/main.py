@@ -184,23 +184,30 @@ class FormularioRegistro(tk.Toplevel):
                 widget.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
             
             elif campo_tipo == 'combo_com_adicionar':
-                # Frame especial para destino com botão [+]
+                # Frame especial para destino com botão [+] e [X]
                 frame_destino = ttk.Frame(main_frame)
                 frame_destino.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
                 
                 widget = ttk.Combobox(
                     frame_destino,
-                    width=35,
+                    width=32,
                     values=self.gerenciador_destinos.obter_destinos_ativos()
                 )
-                widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                widget.pack(side=tk.LEFT)
                 
                 ttk.Button(
                     frame_destino,
                     text="[+]",
-                    width=4,
+                    width=3,
                     command=self.adicionar_novo_destino
                 ).pack(side=tk.LEFT, padx=(5, 0))
+                
+                ttk.Button(
+                    frame_destino,
+                    text="[X]",
+                    width=3,
+                    command=self.excluir_destino_selecionado
+                ).pack(side=tk.LEFT, padx=(2, 0))
                 
             elif campo_tipo == 'combo':
                 valores = campo_config[3] if len(campo_config) > 3 else []
@@ -246,6 +253,24 @@ class FormularioRegistro(tk.Toplevel):
             font=('Arial', 8, 'italic'),
             foreground='gray'
         ).grid(row=row+1, column=0, columnspan=2, pady=10)
+        
+        # Adiciona máscara automática para campos de data
+        for campo in ['DATA', 'DATA ENTRADA', 'DATA SAÍDA']:
+            if campo in self.campos:
+                self.campos[campo].bind('<KeyRelease>', self.mascara_data)
+
+    def mascara_data(self, event):
+        widget = event.widget
+        valor = widget.get().replace('/', '')
+        novo = ''
+        for i, c in enumerate(valor):
+            if i == 2 or i == 4:
+                novo += '/'
+            novo += c
+        # Limita a 10 caracteres (DD/MM/AAAA)
+        novo = novo[:10]
+        widget.delete(0, tk.END)
+        widget.insert(0, novo)
     
     
     def ao_selecionar_veiculo(self, event=None):
@@ -474,6 +499,74 @@ class FormularioRegistro(tk.Toplevel):
         ).pack(side=tk.LEFT, padx=5)
     
     
+    def gerenciar_destinos(self):
+        """
+        Abre janela para gerenciar destinos com botão X dinâmico
+        """
+        from src.interface_destinos import JanelaGerenciarDestinos
+        
+        def callback():
+            # Atualiza lista de destinos no combobox
+            self.campos['DESTINO PROGRAMADO']['values'] = self.gerenciador_destinos.obter_destinos_ativos()
+        
+        JanelaGerenciarDestinos(self, self.gerenciador_destinos, callback=callback)
+    
+    
+    def excluir_destino_selecionado(self):
+        """
+        Exclui o destino atualmente selecionado no combo
+        """
+        combo_destino = self.campos.get('DESTINO PROGRAMADO')
+        if not combo_destino:
+            return
+        
+        destino_selecionado = combo_destino.get().strip()
+        
+        if not destino_selecionado:
+            messagebox.showwarning(
+                "Aviso",
+                "Selecione um destino para excluir!",
+                parent=self
+            )
+            return
+        
+        # Confirmação
+        resposta = messagebox.askyesno(
+            "Confirmar Exclusão",
+            f"Deseja realmente excluir o destino:\n\n'{destino_selecionado}'?\n\n"
+            "Esta ação não pode ser desfeita.",
+            parent=self
+        )
+        
+        if not resposta:
+            return
+        
+        # Busca o índice do destino no DataFrame
+        df = self.gerenciador_destinos.df
+        indices = df[df['NOME_DESTINO'].str.upper() == destino_selecionado.upper()].index
+        
+        if len(indices) == 0:
+            messagebox.showerror(
+                "Erro",
+                "Destino não encontrado no cadastro!",
+                parent=self
+            )
+            return
+        
+        # Exclui o destino
+        sucesso, mensagem = self.gerenciador_destinos.excluir_destino(indices[0])
+        
+        if sucesso:
+            messagebox.showinfo("Sucesso", "Destino excluído com sucesso!", parent=self)
+            
+            # Atualiza a lista no combo
+            novos_destinos = self.gerenciador_destinos.obter_destinos_ativos()
+            combo_destino['values'] = novos_destinos
+            combo_destino.set('')  # Limpa seleção
+        else:
+            messagebox.showerror("Erro", mensagem, parent=self)
+    
+    
     def abrir_cadastro_veiculos(self):
         """
         Abre janela de cadastro de veículos
@@ -494,18 +587,22 @@ class FormularioRegistro(tk.Toplevel):
         """
         for campo_nome, widget in self.campos.items():
             valor = registro.get(campo_nome, '')
-            
+            # Corrige valores NaN do pandas
+            if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+                valor = ''
             if isinstance(widget, tk.Text):
                 widget.delete('1.0', tk.END)
                 widget.insert('1.0', str(valor) if valor else '')
             else:
+                widget.config(state='normal')
                 widget.delete(0, tk.END)
-                
                 # Formata datas
                 if 'DATA' in campo_nome and valor:
                     valor = formatar_data_br(valor)
-                
                 widget.insert(0, str(valor) if valor else '')
+                # Restaura readonly se necessário
+                if widget.cget('state') == 'readonly' or campo_nome in ['PLACA', 'VEÍCULO']:
+                    widget.config(state='readonly')
     
     
     def obter_dados(self):
@@ -576,11 +673,19 @@ class FormularioRegistro(tk.Toplevel):
             dados.get('DATA SAÍDA')
         )
         
-        dados['STATUS'] = calcular_status(
-            dados.get('DATA ENTRADA'),
-            dados.get('DATA SAÍDA'),
-            dados.get('STATUS', '')
-        )
+        # IMPORTANTE: Pega o status selecionado pelo usuário
+        status_selecionado = dados.get('STATUS', '').strip().upper()
+        
+        # Se o usuário selecionou um status manualmente, USA ELE
+        # Só calcula automaticamente se não tiver status selecionado
+        if status_selecionado:
+            dados['STATUS'] = status_selecionado
+        else:
+            dados['STATUS'] = calcular_status(
+                dados.get('DATA ENTRADA'),
+                dados.get('DATA SAÍDA'),
+                ''
+            )
         
         # Atualiza KM do veículo no cadastro
         if dados.get('PLACA') and dados.get('KM'):
@@ -836,7 +941,7 @@ class SistemaManutencao:
         # Aumenta fonte dos botões para emojis ficarem maiores e mais visíveis
         style.configure('TButton', padding=6, font=('Segoe UI Emoji', 11))
         style.configure('TLabel', font=('Arial', 10))
-        style.configure('Header.TLabel', font=('Arial', 14, 'bold'))
+        style.configure('Header.TLabel', font=('Arial', 11, 'bold'))  # Reduzido de 12 para 11
         style.configure('Treeview', rowheight=25, font=('Arial', 9))
         style.configure('Treeview.Heading', font=('Arial', 10, 'bold'))
     
@@ -846,12 +951,12 @@ class SistemaManutencao:
         Cria interface completa
         """
         # ==== FRAME TOPO ====
-        frame_topo = ttk.Frame(self.root, padding="10")
+        frame_topo = ttk.Frame(self.root, padding="3")
         frame_topo.pack(fill=tk.X)
         
         # Frame para logo e título
         frame_header = ttk.Frame(frame_topo)
-        frame_header.pack(fill=tk.X, pady=(0, 10))
+        frame_header.pack(fill=tk.X, pady=(0, 3))
         
         # Logo ALS à esquerda
         try:
@@ -863,8 +968,8 @@ class SistemaManutencao:
             
             # Carrega e redimensiona logo
             logo_original = Image.open(logo_path)
-            # Redimensiona mantendo proporção - LOGO MAIOR (120px)
-            altura_nova = 120  # Aumentado de 80 para 120 pixels
+            # Redimensiona mantendo proporção - LOGO COMPACTA (50px)
+            altura_nova = 50  # Reduzido de 70 para 50 pixels
             proporcao = altura_nova / logo_original.height
             largura_nova = int(logo_original.width * proporcao)
             logo_redimensionada = logo_original.resize((largura_nova, altura_nova), Image.Resampling.LANCZOS)
@@ -872,7 +977,7 @@ class SistemaManutencao:
             self.logo_photo = ImageTk.PhotoImage(logo_redimensionada)
             
             logo_label = ttk.Label(frame_header, image=self.logo_photo)
-            logo_label.pack(side=tk.LEFT, padx=(0, 20))
+            logo_label.pack(side=tk.LEFT, padx=(0, 10))
         except Exception as e:
             print(f"Aviso: Não foi possível carregar logo: {e}")
         
@@ -884,18 +989,18 @@ class SistemaManutencao:
             titulo_frame,
             text="SISTEMA DE GESTÃO DE MANUTENÇÃO - ALS",
             style='Header.TLabel'
-        ).pack(anchor=tk.W, pady=(45, 0))  # Ajustado para centralizar com logo maior
+        ).pack(anchor=tk.W, pady=(15, 0))  # Ajustado para centralizar com logo compacta
         
         # Estatísticas
         self.frame_stats = ttk.Frame(frame_topo)
-        self.frame_stats.pack(pady=10)
+        self.frame_stats.pack(pady=3)
         
         self.label_stats = ttk.Label(self.frame_stats, text="", font=('Arial', 9))
         self.label_stats.pack()
         
         # ==== FRAME FILTROS ====
-        frame_filtros = ttk.LabelFrame(self.root, text="[Filtros de Busca]", padding="10")
-        frame_filtros.pack(fill=tk.X, padx=10, pady=5)
+        frame_filtros = ttk.LabelFrame(self.root, text="[Filtros de Busca]", padding="5")
+        frame_filtros.pack(fill=tk.X, padx=10, pady=3)
         
         filtro_linha = ttk.Frame(frame_filtros)
         filtro_linha.pack(fill=tk.X)
@@ -916,6 +1021,14 @@ class SistemaManutencao:
         )
         self.filtro_status.pack(side=tk.LEFT, padx=5)
         
+        ttk.Label(filtro_linha, text="Data Entrada:").pack(side=tk.LEFT, padx=5)
+        self.filtro_data_entrada = ttk.Entry(filtro_linha, width=12)
+        self.filtro_data_entrada.pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(filtro_linha, text="Data Saída:").pack(side=tk.LEFT, padx=5)
+        self.filtro_data_saida = ttk.Entry(filtro_linha, width=12)
+        self.filtro_data_saida.pack(side=tk.LEFT, padx=5)
+        
         ttk.Button(filtro_linha, text="🔍  Buscar", command=self.aplicar_filtros).pack(side=tk.LEFT, padx=5)
         ttk.Button(filtro_linha, text="🧹  Limpar", command=self.limpar_filtros).pack(side=tk.LEFT, padx=5)
         
@@ -925,12 +1038,13 @@ class SistemaManutencao:
         
         ttk.Button(frame_acoes, text="➕  Novo Registro", command=self.novo_registro).pack(side=tk.LEFT, padx=5)
         ttk.Button(frame_acoes, text="✏️  Editar", command=self.editar_registro).pack(side=tk.LEFT, padx=5)
-        ttk.Button(frame_acoes, text="🗑️  Excluir", command=self.excluir_registro).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_acoes, text="🗑️  Excluir Selecionado", command=self.excluir_registro).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_acoes, text="🗑️❌  Excluir Múltiplos", command=self.excluir_multiplos).pack(side=tk.LEFT, padx=5)
         ttk.Button(frame_acoes, text="💾  Salvar", command=self.salvar_dados).pack(side=tk.LEFT, padx=5)
         ttk.Button(frame_acoes, text="🔄  Atualizar", command=self.atualizar_tabela).pack(side=tk.LEFT, padx=5)
         ttk.Button(frame_acoes, text="🚛  Veículos", command=self.gerenciar_veiculos).pack(side=tk.LEFT, padx=5)
         ttk.Button(frame_acoes, text="📊  Relatório", command=self.gerar_relatorio).pack(side=tk.LEFT, padx=5)
-        ttk.Button(frame_acoes, text="📤  Exportar", command=self.exportar_excel).pack(side=tk.LEFT, padx=5)
+        ttk.Button(frame_acoes, text="📤  Exportar", command=self.exportar_dados).pack(side=tk.LEFT, padx=5)
         ttk.Button(frame_acoes, text="📥  Importar", command=self.importar_dados).pack(side=tk.LEFT, padx=5)
         
         # ==== NOTEBOOK (ABAS) ====
@@ -950,7 +1064,7 @@ class SistemaManutencao:
             frame_tabela,
             yscrollcommand=scroll_y.set,
             xscrollcommand=scroll_x.set,
-            selectmode='browse'
+            selectmode='extended'  # Permite seleção múltipla com Ctrl e Shift
         )
         
         scroll_y.config(command=self.tree.yview)
@@ -1213,11 +1327,6 @@ class SistemaManutencao:
                     valores_novos.append('')
             
             self.tree.insert('', tk.END, values=valores_novos, tags=tags)
-        
-        # Mantém cores
-        self.tree.tag_configure('em_transito', background='#d3d3d3')
-        self.tree.tag_configure('em_servico', background='#fff3cd')
-        self.tree.tag_configure('finalizado', background='#d1e7dd')
     
     
     def ordenar_por_coluna(self, coluna):
@@ -1264,6 +1373,10 @@ class SistemaManutencao:
             elif coluna in ['KM', 'DIAS']:
                 df_ordenado[coluna_df] = pd.to_numeric(df_ordenado[coluna_df], errors='coerce')
                 df_ordenado = df_ordenado.sort_values(by=coluna_df, ascending=True, na_position='last')
+            # Tratamento especial para STATUS (preenche vazios)
+            elif coluna == 'STATUS':
+                df_ordenado[coluna_df] = df_ordenado[coluna_df].fillna('').astype(str)
+                df_ordenado = df_ordenado.sort_values(by=coluna_df, ascending=True, na_position='last')
             # Ordenação alfabética para texto
             else:
                 df_ordenado = df_ordenado.sort_values(by=coluna_df, ascending=True, na_position='last')
@@ -1284,6 +1397,10 @@ class SistemaManutencao:
             elif coluna in ['KM', 'DIAS']:
                 df_ordenado[coluna_df] = pd.to_numeric(df_ordenado[coluna_df], errors='coerce')
                 df_ordenado = df_ordenado.sort_values(by=coluna_df, ascending=False, na_position='last')
+            # Tratamento especial para STATUS (preenche vazios)
+            elif coluna == 'STATUS':
+                df_ordenado[coluna_df] = df_ordenado[coluna_df].fillna('').astype(str)
+                df_ordenado = df_ordenado.sort_values(by=coluna_df, ascending=False, na_position='last')
             # Ordenação alfabética para texto
             else:
                 df_ordenado = df_ordenado.sort_values(by=coluna_df, ascending=False, na_position='last')
@@ -1292,9 +1409,10 @@ class SistemaManutencao:
             self.tree.heading(coluna, text=f"{coluna} ▼")
             
         else:  # estado_atual == 'desc'
-            # Terceira vez: volta à ordem original
+            # Terceira vez: volta à ordem original (recarrega do banco)
             novo_estado = None
-            df_ordenado = self.df_original.copy()
+            self.db.carregar_dados()  # Recarrega do SQLite
+            df_ordenado = self.db.df.copy()
             
             # Remove indicador visual do cabeçalho
             self.tree.heading(coluna, text=coluna)
@@ -1312,8 +1430,14 @@ class SistemaManutencao:
                 self.tree.heading(outra_col, text=outra_col)
         
         # Atualiza a exibição com DataFrame ordenado
-        self.db.df = df_ordenado.reset_index(drop=True)
-        self.atualizar_tabela()
+        # NOTA: Apenas reordena visualização, não altera dados no SQLite
+        if novo_estado is None:
+            # Se voltou ao normal, mantém o DataFrame recarregado
+            self.atualizar_tabela()
+        else:
+            # Se ordenou, usa o DataFrame ordenado
+            self.db.df = df_ordenado.reset_index(drop=True)
+            self.atualizar_tabela()
     
     
     def atualizar_tabela(self, df=None):
@@ -1378,7 +1502,7 @@ class SistemaManutencao:
             self.tree.insert('', tk.END, values=valores, tags=(idx, tag))
         
         # Configura cores
-        self.tree.tag_configure('em_transito', background='#d3d3d3')  # Cinza
+        self.tree.tag_configure('em_transito', background='#f0f0f0')  # Cinza mais claro
         self.tree.tag_configure('em_servico', background='#fff3cd')   # Amarelo claro
         self.tree.tag_configure('finalizado', background='#d1e7dd')   # Verde claro
         
@@ -1405,16 +1529,16 @@ class SistemaManutencao:
         Aplica filtros de busca
         """
         filtros = {}
-        
         if self.filtro_placa.get():
             filtros['PLACA'] = self.filtro_placa.get()
-        
         if self.filtro_veiculo.get():
             filtros['VEÍCULO'] = self.filtro_veiculo.get()
-        
         if self.filtro_status.get():
             filtros['STATUS'] = self.filtro_status.get()
-        
+        if self.filtro_data_entrada.get():
+            filtros['DATA ENTRADA'] = self.filtro_data_entrada.get()
+        if self.filtro_data_saida.get():
+            filtros['DATA SAÍDA'] = self.filtro_data_saida.get()
         df_filtrado = self.db.buscar_registros(filtros)
         self.atualizar_tabela(df_filtrado)
         self.label_status.config(text=f"🔍  {len(df_filtrado)} registros encontrados")
@@ -1427,6 +1551,8 @@ class SistemaManutencao:
         self.filtro_placa.delete(0, tk.END)
         self.filtro_veiculo.delete(0, tk.END)
         self.filtro_status.set('')
+        self.filtro_data_entrada.delete(0, tk.END)
+        self.filtro_data_saida.delete(0, tk.END)
         self.atualizar_tabela()
     
     
@@ -1435,11 +1561,16 @@ class SistemaManutencao:
         Abre formulário para novo registro
         """
         def callback(dados):
-            if self.db.adicionar_registro(dados):
-                self.atualizar_tabela()
-                self.atualizar_estatisticas()
-                messagebox.showinfo("Sucesso", "Registro adicionado com sucesso!")
-        
+            try:
+                if self.db.adicionar_registro(dados):
+                    if self.db.salvar_dados():
+                        self.atualizar_tabela()
+                        self.atualizar_estatisticas()
+                        messagebox.showinfo("Sucesso", "Registro adicionado com sucesso!")
+                    else:
+                        messagebox.showerror("Erro", "Registro adicionado mas não foi possível salvar no banco de dados")
+            except Exception as e:
+                messagebox.showerror("Erro ao adicionar registro", str(e))
         FormularioRegistro(self.root, self.db, self.gerenciador_veiculos, self.gerenciador_destinos, callback=callback)
     
     
@@ -1455,9 +1586,12 @@ class SistemaManutencao:
         
         def callback(dados):
             if self.db.atualizar_registro(self.indice_selecionado, dados):
-                self.atualizar_tabela()
-                self.atualizar_estatisticas()
-                messagebox.showinfo("Sucesso", "Registro atualizado com sucesso!")
+                if self.db.salvar_dados():
+                    self.atualizar_tabela()
+                    self.atualizar_estatisticas()
+                    messagebox.showinfo("Sucesso", "Registro atualizado com sucesso!")
+                else:
+                    messagebox.showerror("Erro", "Registro atualizado mas não foi possível salvar no banco de dados")
         
         FormularioRegistro(self.root, self.db, self.gerenciador_veiculos, self.gerenciador_destinos, registro=registro, callback=callback)
     
@@ -1466,8 +1600,21 @@ class SistemaManutencao:
         """
         Exclui registro selecionado
         """
-        if self.indice_selecionado is None:
+        selecao = self.tree.selection()
+        if not selecao:
             messagebox.showwarning("Aviso", "Selecione um registro para excluir")
+            return
+        
+        if len(selecao) > 1:
+            messagebox.showinfo("Dica", "Você selecionou múltiplos registros.\n\nUse o botão '🗑️❌ Excluir Múltiplos' para excluir vários de uma vez.")
+            return
+        
+        # Pega o primeiro item selecionado
+        item = self.tree.item(selecao[0])
+        indice = item['tags'][0] if item['tags'] else None
+        
+        if indice is None:
+            messagebox.showwarning("Aviso", "Não foi possível identificar o registro")
             return
         
         resposta = messagebox.askyesno(
@@ -1476,11 +1623,58 @@ class SistemaManutencao:
         )
         
         if resposta:
-            if self.db.excluir_registro(self.indice_selecionado):
+            if self.db.excluir_registro(indice):
+                if self.db.salvar_dados():
+                    self.atualizar_tabela()
+                    self.atualizar_estatisticas()
+                    self.indice_selecionado = None
+                    messagebox.showinfo("Sucesso", "Registro excluído com sucesso!")
+                else:
+                    messagebox.showerror("Erro", "Registro excluído mas não foi possível salvar no banco de dados")
+    
+    
+    def excluir_multiplos(self):
+        """
+        Exclui múltiplos registros selecionados
+        """
+        selecao = self.tree.selection()
+        if not selecao:
+            messagebox.showwarning("Aviso", "Selecione um ou mais registros para excluir\n\n💡 Dica: Use Ctrl+Clique ou Shift+Clique para selecionar múltiplos")
+            return
+        
+        qtd = len(selecao)
+        
+        resposta = messagebox.askyesno(
+            "Confirmar Exclusão Múltipla",
+            f"Tem certeza que deseja excluir {qtd} registro(s) selecionado(s)?\n\n⚠️ Esta ação não pode ser desfeita!"
+        )
+        
+        if resposta:
+            # Coleta todos os índices dos registros selecionados
+            indices_para_excluir = []
+            for item_id in selecao:
+                item = self.tree.item(item_id)
+                indice = item['tags'][0] if item['tags'] else None
+                if indice is not None:
+                    indices_para_excluir.append(indice)
+            
+            # Ordena em ordem decrescente para não afetar os índices durante exclusão
+            indices_para_excluir.sort(reverse=True)
+            
+            # Exclui cada registro
+            excluidos = 0
+            for indice in indices_para_excluir:
+                if self.db.excluir_registro(indice):
+                    excluidos += 1
+            
+            # Salva alterações
+            if self.db.salvar_dados():
                 self.atualizar_tabela()
                 self.atualizar_estatisticas()
                 self.indice_selecionado = None
-                messagebox.showinfo("Sucesso", "Registro excluído com sucesso!")
+                messagebox.showinfo("Sucesso", f"{excluidos} registro(s) excluído(s) com sucesso!")
+            else:
+                messagebox.showerror("Erro", f"{excluidos} registro(s) excluído(s) mas não foi possível salvar no banco de dados")
     
     
     def salvar_dados(self):
@@ -1505,7 +1699,7 @@ class SistemaManutencao:
         """
         Gera relatório estatístico com opções de formato
         """
-        from .utils import gerar_relatorio_pdf, gerar_relatorio_word
+        from src.utils import gerar_relatorio_pdf, gerar_relatorio_word
         
         # Janela de opções
         dialog = tk.Toplevel(self.root)
@@ -1690,20 +1884,357 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
             print(f"Erro ao carregar notas: {e}")
     
     
-    def exportar_excel(self):
-        """Exporta dados atuais para Excel"""
+    def exportar_dados(self):
+        """Exporta dados com opção de escolher formato (Excel, PDF ou Word)"""
+        # Janela de opções
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Exportar Dados")
+        dialog.geometry("450x350")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Centralizar
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - 225
+        y = (dialog.winfo_screenheight() // 2) - 175
+        dialog.geometry(f"450x350+{x}+{y}")
+        
+        frame = ttk.Frame(dialog, padding="20")
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Label(
+            frame,
+            text="📤 Exportar Dados",
+            font=('Arial', 14, 'bold')
+        ).pack(pady=(0, 15))
+        
+        ttk.Label(
+            frame,
+            text="Escolha o formato de exportação:",
+            font=('Arial', 10)
+        ).pack(anchor=tk.W, pady=(0, 10))
+        
+        # Variável para formato
+        formato_var = tk.StringVar(value="excel")
+        
+        # Opções de formato
+        frame_formatos = ttk.Frame(frame)
+        frame_formatos.pack(fill=tk.X, pady=10)
+        
+        ttk.Radiobutton(
+            frame_formatos,
+            text="📊 Excel (.xlsx)",
+            variable=formato_var,
+            value="excel"
+        ).pack(anchor=tk.W, pady=3)
+        
+        ttk.Radiobutton(
+            frame_formatos,
+            text="📄 PDF (.pdf)",
+            variable=formato_var,
+            value="pdf"
+        ).pack(anchor=tk.W, pady=3)
+        
+        ttk.Radiobutton(
+            frame_formatos,
+            text="📝 Word (.docx)",
+            variable=formato_var,
+            value="word"
+        ).pack(anchor=tk.W, pady=3)
+        
+        # Checkbox para usar filtros atuais
+        usar_filtros_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            frame,
+            text="Usar filtros atuais (exportar apenas dados visíveis)",
+            variable=usar_filtros_var
+        ).pack(anchor=tk.W, pady=15)
+        
+        # Info sobre quantidade
+        qtd_total = len(self.db.df)
+        qtd_visivel = len(self.tree.get_children())
+        
+        self.label_info_export = ttk.Label(
+            frame,
+            text=f"📋 Total: {qtd_total} registros | Visíveis: {qtd_visivel} registros",
+            font=('Arial', 9)
+        )
+        self.label_info_export.pack(pady=5)
+        
+        # Botões
+        frame_botoes = ttk.Frame(frame)
+        frame_botoes.pack(pady=20)
+        
+        def executar_exportacao():
+            formato = formato_var.get()
+            usar_filtros = usar_filtros_var.get()
+            dialog.destroy()
+            self._executar_exportacao(formato, usar_filtros)
+        
+        ttk.Button(
+            frame_botoes,
+            text="📤 Exportar",
+            command=executar_exportacao,
+            width=15
+        ).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(
+            frame_botoes,
+            text="❌ Cancelar",
+            command=dialog.destroy,
+            width=15
+        ).pack(side=tk.LEFT, padx=5)
+    
+    
+    def _executar_exportacao(self, formato, usar_filtros):
+        """Executa a exportação no formato escolhido"""
         try:
+            # Obtém dados baseado nos filtros
+            if usar_filtros:
+                # Pega os dados visíveis no grid
+                df_exportar = self._obter_dados_grid()
+            else:
+                df_exportar = self.db.df.copy()
+            
+            if df_exportar.empty:
+                messagebox.showwarning("Aviso", "Não há dados para exportar!")
+                return
+            
+            # Define extensão e filtro baseado no formato
+            if formato == "excel":
+                extensao = ".xlsx"
+                filetypes = [("Excel", "*.xlsx")]
+            elif formato == "pdf":
+                extensao = ".pdf"
+                filetypes = [("PDF", "*.pdf")]
+            else:  # word
+                extensao = ".docx"
+                filetypes = [("Word", "*.docx")]
+            
+            # Solicita local para salvar
             arquivo = filedialog.asksaveasfilename(
-                defaultextension=".xlsx",
-                filetypes=[("Excel", "*.xlsx")],
-                initialfile=f"manutencao_als_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                defaultextension=extensao,
+                filetypes=filetypes,
+                initialfile=f"manutencao_als_{datetime.now().strftime('%Y%m%d_%H%M%S')}{extensao}"
             )
             
-            if arquivo:
-                self.db.df.to_excel(arquivo, index=False)
-                messagebox.showinfo("Sucesso", f"Dados exportados para:\n{arquivo}")
+            if not arquivo:
+                return
+            
+            # Executa exportação baseada no formato
+            if formato == "excel":
+                self._exportar_excel(df_exportar, arquivo)
+            elif formato == "pdf":
+                self._exportar_pdf(df_exportar, arquivo)
+            else:  # word
+                self._exportar_word(df_exportar, arquivo)
+                
         except Exception as e:
             messagebox.showerror("Erro", f"Erro ao exportar: {e}")
+    
+    
+    def _obter_dados_grid(self):
+        """Obtém os dados atualmente visíveis no grid na ordem das colunas"""
+        # Colunas do grid
+        colunas_grid = list(self.tree['columns'])
+        
+        # Lista para armazenar dados
+        dados = []
+        
+        # Percorre itens do grid
+        for item in self.tree.get_children():
+            valores = self.tree.item(item)['values']
+            linha = {}
+            for i, col in enumerate(colunas_grid):
+                if i < len(valores):
+                    linha[col] = valores[i]
+                else:
+                    linha[col] = ''
+            dados.append(linha)
+        
+        return pd.DataFrame(dados)
+    
+    
+    def _exportar_excel(self, df, arquivo):
+        """Exporta para Excel"""
+        try:
+            # Cria writer do Excel com formatação
+            with pd.ExcelWriter(arquivo, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Manutenção')
+                
+                # Ajusta largura das colunas
+                worksheet = writer.sheets['Manutenção']
+                for i, col in enumerate(df.columns):
+                    max_len = max(
+                        df[col].astype(str).apply(len).max(),
+                        len(str(col))
+                    ) + 2
+                    worksheet.column_dimensions[chr(65 + i)].width = min(max_len, 50)
+            
+            messagebox.showinfo("Sucesso", f"✅ Dados exportados para Excel:\n{arquivo}")
+            os.startfile(arquivo)
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao exportar Excel: {e}")
+    
+    
+    def _exportar_pdf(self, df, arquivo):
+        """Exporta para PDF"""
+        try:
+            from reportlab.lib import colors
+            from reportlab.lib.pagesizes import A4, landscape
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import mm
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
+            
+            # Cria documento PDF em paisagem
+            doc = SimpleDocTemplate(
+                arquivo,
+                pagesize=landscape(A4),
+                rightMargin=10*mm,
+                leftMargin=10*mm,
+                topMargin=15*mm,
+                bottomMargin=15*mm
+            )
+            
+            elements = []
+            styles = getSampleStyleSheet()
+            
+            # Título
+            titulo_style = ParagraphStyle(
+                'Titulo',
+                parent=styles['Heading1'],
+                fontSize=16,
+                alignment=1,  # Centralizado
+                spaceAfter=20
+            )
+            elements.append(Paragraph("Relatório de Manutenção - ALS", titulo_style))
+            elements.append(Paragraph(f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles['Normal']))
+            elements.append(Spacer(1, 10*mm))
+            
+            # Prepara dados da tabela
+            colunas = list(df.columns)
+            dados_tabela = [colunas]  # Cabeçalho
+            
+            for _, row in df.iterrows():
+                linha = [str(row.get(col, ''))[:30] for col in colunas]  # Limita texto
+                dados_tabela.append(linha)
+            
+            # Calcula largura das colunas
+            largura_pagina = landscape(A4)[0] - 20*mm
+            num_colunas = len(colunas)
+            largura_coluna = largura_pagina / num_colunas
+            
+            # Cria tabela
+            tabela = Table(dados_tabela, repeatRows=1)
+            
+            # Estilo da tabela
+            estilo = TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2c3e50')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 8),
+                ('FONTSIZE', (0, 1), (-1, -1), 7),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('TOPPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
+            ])
+            tabela.setStyle(estilo)
+            
+            elements.append(tabela)
+            
+            # Rodapé com total
+            elements.append(Spacer(1, 10*mm))
+            elements.append(Paragraph(f"Total de registros: {len(df)}", styles['Normal']))
+            
+            # Gera PDF
+            doc.build(elements)
+            
+            messagebox.showinfo("Sucesso", f"✅ Dados exportados para PDF:\n{arquivo}")
+            os.startfile(arquivo)
+        except ImportError:
+            messagebox.showerror("Erro", "Biblioteca reportlab não instalada.\nExecute: pip install reportlab")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao exportar PDF: {e}")
+    
+    
+    def _exportar_word(self, df, arquivo):
+        """Exporta para Word"""
+        try:
+            from docx import Document
+            from docx.shared import Inches, Pt, Cm
+            from docx.enum.table import WD_TABLE_ALIGNMENT
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            from docx.oxml.ns import nsdecls
+            from docx.oxml import parse_xml
+            
+            # Cria documento
+            doc = Document()
+            
+            # Configura página paisagem
+            section = doc.sections[0]
+            section.page_width, section.page_height = section.page_height, section.page_width
+            section.left_margin = Cm(1)
+            section.right_margin = Cm(1)
+            
+            # Título
+            titulo = doc.add_heading('Relatório de Manutenção - ALS', 0)
+            titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            # Data
+            data_para = doc.add_paragraph(f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+            data_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            doc.add_paragraph()  # Espaço
+            
+            # Cria tabela
+            colunas = list(df.columns)
+            tabela = doc.add_table(rows=1, cols=len(colunas))
+            tabela.style = 'Table Grid'
+            tabela.alignment = WD_TABLE_ALIGNMENT.CENTER
+            
+            # Cabeçalho
+            cabecalho = tabela.rows[0].cells
+            for i, col in enumerate(colunas):
+                cabecalho[i].text = col
+                # Cor de fundo azul escuro
+                shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="2c3e50"/>')
+                cabecalho[i]._tc.get_or_add_tcPr().append(shading)
+                # Texto branco e negrito
+                run = cabecalho[i].paragraphs[0].runs[0]
+                run.bold = True
+                run.font.size = Pt(9)
+            
+            # Dados
+            for _, row in df.iterrows():
+                linha_tabela = tabela.add_row().cells
+                for i, col in enumerate(colunas):
+                    valor = str(row.get(col, ''))[:50]  # Limita texto
+                    linha_tabela[i].text = valor
+                    linha_tabela[i].paragraphs[0].runs[0].font.size = Pt(8)
+            
+            # Total
+            doc.add_paragraph()
+            doc.add_paragraph(f"Total de registros: {len(df)}")
+            
+            # Salva documento
+            doc.save(arquivo)
+            
+            messagebox.showinfo("Sucesso", f"✅ Dados exportados para Word:\n{arquivo}")
+            os.startfile(arquivo)
+        except ImportError:
+            messagebox.showerror("Erro", "Biblioteca python-docx não instalada.\nExecute: pip install python-docx")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao exportar Word: {e}")
+    
+    
+    def exportar_excel(self):
+        """Exporta dados atuais para Excel (mantido para compatibilidade)"""
+        self.exportar_dados()
     
     
     def importar_dados(self):
@@ -1718,7 +2249,7 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
         # Centralizar
         dialog.update_idletasks()
         x = (dialog.winfo_screenwidth() // 2) - (275)
-        y = (dialog.winfo_screenheight() // 2) - (225)
+        y = (dialog.winfo_screenheight() //  2) - (225)
         dialog.geometry(f"550x450+{x}+{y}")
         
         frame = ttk.Frame(dialog, padding="20")
@@ -1735,6 +2266,7 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
             text="Use esta função para importar registros antigos do Excel\npara o banco de dados SQLite.",
             font=('Arial', 10),
             justify=tk.CENTER
+       
         ).pack(pady=(0, 20))
         
         # Modo de importação
@@ -1828,8 +2360,40 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                 
                 progress_win.update()
                 
-                # Lê Excel (header=1 pula linha de título)
-                df_excel = pd.read_excel(arquivo, header=1)
+                # Tenta ler Excel (header=1 pula linha de título)
+                try:
+                    # Copia arquivo temporariamente se estiver no OneDrive
+                    import tempfile
+                    if 'OneDrive' in arquivo or 'onedrive' in arquivo.lower():
+                        label_status.config(text="Copiando arquivo do OneDrive...")
+                        progress_win.update()
+                        
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+                            arquivo_temp = tmp.name
+                            import shutil
+                            shutil.copy2(arquivo, arquivo_temp)
+                            arquivo = arquivo_temp
+                    
+                    df_excel = pd.read_excel(arquivo, header=1)
+                except PermissionError as e:
+                    progress_win.destroy()
+                    messagebox.showerror(
+                        "Erro de Permissão",
+                        f"Não foi possível acessar o arquivo:\n\n{os.path.basename(arquivo)}\n\n"
+                        "💡 Dicas:\n"
+                        "• Feche o arquivo no Excel se estiver aberto\n"
+                        "• Se o arquivo estiver no OneDrive, copie para a pasta 'data' do sistema\n"
+                        "• Verifique se você tem permissão de leitura no arquivo"
+                    )
+                    return
+                except Exception as e:
+                    progress_win.destroy()
+                    messagebox.showerror(
+                        "Erro ao Ler Arquivo",
+                        f"Erro ao ler o arquivo Excel:\n\n{str(e)}\n\n"
+                        "Verifique se o arquivo está no formato correto."
+                    )
+                    return
                 
                 # Limpa nomes de colunas (remove espaços extras)
                 df_excel.columns = df_excel.columns.str.strip()
@@ -2037,13 +2601,31 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                     resultado
                 )
                 
-            except Exception as e:
-                if 'progress_win' in locals():
+            except PermissionError as e:
+                if 'progress_win' in locals() and progress_win.winfo_exists():
                     progress_win.destroy()
                 messagebox.showerror(
+                    "Erro de Permissão",
+                    f"Acesso negado ao arquivo:\n\n{str(e)}\n\n"
+                    "💡 Feche o arquivo no Excel e tente novamente.",
+                    parent=dialog if 'dialog' in locals() and dialog.winfo_exists() else self.root
+                )
+            except Exception as e:
+                # Faz rollback se houver erro
+                if 'cursor' in locals():
+                    try:
+                        self.db.conn.rollback()
+                    except:
+                        pass
+                
+                if 'progress_win' in locals() and progress_win.winfo_exists():
+                    progress_win.destroy()
+                
+                messagebox.showerror(
                     "Erro na Importação",
-                    f"Erro ao importar dados:\n\n{str(e)}",
-                    parent=dialog if dialog.winfo_exists() else self.root
+                    f"Erro ao importar dados:\n\n{str(e)}\n\n"
+                    "⚠️ Nenhuma alteração foi feita no banco de dados.",
+                    parent=dialog if 'dialog' in locals() and dialog.winfo_exists() else self.root
                 )
         
         # Botões

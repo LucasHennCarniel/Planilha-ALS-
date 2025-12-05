@@ -202,6 +202,14 @@ mkdir "%PASTA_DIST%\data"
 mkdir "%PASTA_DIST%\img"
 echo    ✅ Pastas criadas
 
+
+REM Cria pastas necessárias para o sistema rodar
+mkdir "%PASTA_DIST%\backup" 2>nul
+mkdir "%PASTA_DIST%\output" 2>nul
+echo   ✅ Pastas backup e output criadas
+
+
+
 REM Move executável
 echo    📦 Movendo executável...
 move "dist\SistemaManutencaoALS.exe" "%PASTA_DIST%\" >nul 2>&1

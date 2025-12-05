@@ -1,5 +1,11 @@
+applyTo: "**"
+
+---
+
+REGRAS DE USO DA IA NO MEU DESENVOLVIMENTO
+
 1. Nunca altere diretamente no código.
-   Sempre me diga:
+   Sempre me informe:
    - O que deve ser alterado
    - Em qual arquivo
    - Em qual função, classe ou trecho exato
@@ -22,5 +28,10 @@
    - O que acontece se eu mudar esse comportamento
 
 6. Caso exista mais de uma forma de resolver:
-   - Mostre pelo menos duas
+   - Mostre pelo menos duas opções
    - Explique prós e contras de cada uma
+
+7. Sempre diga exatamente:
+   - Em qual arquivo mexer
+   - Em qual função
+   - Em qual parte do código (início, meio ou fim)
