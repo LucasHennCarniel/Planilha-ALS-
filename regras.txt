@@ -1,0 +1,26 @@
+1. Nunca altere diretamente no código.
+   Sempre me diga:
+   - O que deve ser alterado
+   - Em qual arquivo
+   - Em qual função, classe ou trecho exato
+   E eu farei a alteração manualmente.
+
+2. Sempre explique a lógica ANTES de mostrar qualquer código.
+
+3. Quando mostrar código:
+   - Primeiro explique o que cada parte faz.
+   - Depois mostre apenas como exemplo.
+
+4. Sempre aponte:
+   - Onde essa lógica se encaixa no sistema
+   - O que essa parte impacta
+   - O que ela depende
+   - Quem depende dela
+
+5. Sempre que possível, explique:
+   - O que acontece se eu remover esse trecho
+   - O que acontece se eu mudar esse comportamento
+
+6. Caso exista mais de uma forma de resolver:
+   - Mostre pelo menos duas
+   - Explique prós e contras de cada uma
