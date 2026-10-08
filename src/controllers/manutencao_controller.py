@@ -163,8 +163,8 @@ class ManutencaoController:
         if df.empty:
             return {
                 'total': 0, 'em_manutencao': 0, 'finalizados': 0,
-                'aguardando': 0, 'em_transito': 0, 'em_servico': 0,
-                'tempo_medio': 0
+            'aguardando': 0, 'em_transito': 0, 'em_servico': 0,
+            'tempo_medio': 0, 'placas_unicas': 0
             }
         
         return {
@@ -174,7 +174,8 @@ class ManutencaoController:
             'aguardando': len(df[df['STATUS'] == 'AGUARDANDO']),
             'em_transito': len(df[df['STATUS'] == 'EM TRÂNSITO']),
             'em_servico': len(df[df['STATUS'] == 'EM SERVIÇO']),
-            'tempo_medio': round(float(df['TOTAL DE DIAS EM MANUTENÇÃO'].mean()), 1) if 'TOTAL DE DIAS EM MANUTENÇÃO' in df.columns else 0
+            'tempo_medio': round(float(df['TOTAL DE DIAS EM MANUTENÇÃO'].mean()), 1) if 'TOTAL DE DIAS EM MANUTENÇÃO' in df.columns else 0,
+            'placas_unicas': df['PLACA'].nunique() if 'PLACA' in df.columns else 0
         }
     def buscar_registros(self, filtros):
         df = self.df

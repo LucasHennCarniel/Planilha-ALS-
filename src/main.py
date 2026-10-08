@@ -693,7 +693,7 @@ class SistemaManutencao:
         """
         stats = self.db.obter_estatisticas()
         
-        texto = f"📊  Total: {stats['total_registros']}  |  "
+        texto = f"📊  Total: {stats['total']}  |  "
         texto += f"🔧  Em Serviço: {stats['em_servico']}  |  "
         texto += f"✅  Finalizados: {stats['finalizados']}  |  "
         texto += f"⏱️  Tempo Médio: {stats['tempo_medio']:.1f} dias  |  "
