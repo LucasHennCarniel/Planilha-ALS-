@@ -589,7 +589,7 @@ class SistemaManutencao:
         else:  # estado_atual == 'desc'
             # Terceira vez: volta à ordem original (recarrega do banco)
             novo_estado = None
-            self.db.carregar_dados()  # Recarrega do SQLite
+            # self.db.carregar_dados() no longer needed  # Recarrega do SQLite
             df_ordenado = self.db.df.copy()
             
             # Remove indicador visual do cabeçalho
@@ -1298,7 +1298,7 @@ class SistemaManutencao:
                 progress_win.destroy()
                 
                 # Atualiza interface
-                self.db.carregar_dados()
+                # self.db.carregar_dados() no longer needed
                 self.atualizar_tabela()
                 self.atualizar_estatisticas()
                 
