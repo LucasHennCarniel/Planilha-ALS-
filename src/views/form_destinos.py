@@ -97,9 +97,9 @@ class JanelaGerenciarDestinos(tk.Toplevel):
         for widget in self.frame_destinos.winfo_children():
             widget.destroy()
         
-        df = self.gerenciador.df
+        destinos = self.gerenciador.obter_todos()
         
-        if df.empty:
+        if not destinos:
             ttk.Label(
                 self.frame_destinos,
                 text="Nenhum destino cadastrado",
@@ -108,14 +108,15 @@ class JanelaGerenciarDestinos(tk.Toplevel):
             return
         
         # Cria item para cada destino
-        for idx, row in df.iterrows():
+        for idx, row in enumerate(destinos):
             self.criar_item_destino(idx, row)
     
     
     def criar_item_destino(self, indice, dados):
         """Cria item de destino com botão X dinâmico"""
-        nome = dados.get('NOME_DESTINO', '')
-        ativo = dados.get('ATIVO', True)
+        nome = dados.get('nome_destino', '')
+        ativo = bool(dados.get('ativo', True))
+        id_destino = dados.get('id')
         
         # Frame do item
         frame_item = tk.Frame(
@@ -158,7 +159,7 @@ class JanelaGerenciarDestinos(tk.Toplevel):
             fg='white',
             relief=tk.FLAT,
             cursor='hand2',
-            command=lambda: self.excluir_destino(indice, nome)
+            command=lambda: self.excluir_destino(id_destino, nome)
         )
         
         # Binds para mostrar/esconder botão X
@@ -251,7 +252,7 @@ class JanelaGerenciarDestinos(tk.Toplevel):
         ).pack(side=tk.LEFT, padx=5)
     
     
-    def excluir_destino(self, indice, nome):
+    def excluir_destino(self, id_destino, nome):
         """Exclui destino após confirmação"""
         resposta = messagebox.askyesno(
             "Confirmar Exclusão",
@@ -260,7 +261,7 @@ class JanelaGerenciarDestinos(tk.Toplevel):
         )
         
         if resposta:
-            sucesso, mensagem = self.gerenciador.excluir_destino(indice)
+            sucesso, mensagem = self.gerenciador.excluir_destino(id_destino)
             
             if sucesso:
                 self.atualizar_lista()

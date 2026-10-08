@@ -148,26 +148,27 @@ class JanelaCadastroVeiculos(tk.Toplevel):
             self.tree.delete(item)
         
         # Popula tabela
-        df = self.gerenciador.df
+        veiculos = self.gerenciador.obter_todos()
         
-        if df.empty:
+        if not veiculos:
             self.label_stats.config(text="📊 Nenhum veículo cadastrado ainda")
             return
         
-        for idx, row in df.iterrows():
+        for veiculo in veiculos:
             valores = [
-                row.get('TIPO_VEICULO', ''),
-                row.get('PLACA', ''),
-                row.get('DESCRICAO', ''),
-                row.get('ULTIMA_KM', '0'),
-                row.get('DATA_CADASTRO', ''),
-                'ATIVO' if row.get('ATIVO', False) else 'INATIVO'
+                veiculo.get('tipo_veiculo', ''),
+                veiculo.get('placa', ''),
+                veiculo.get('descricao', ''),
+                veiculo.get('ultima_km', '0'),
+                veiculo.get('data_cadastro', ''),
+                'ATIVO' if veiculo.get('ativo', False) else 'INATIVO'
             ]
             
             # Define cor baseada no status
-            tag = 'ativo' if row.get('ATIVO', False) else 'inativo'
+            tag = 'ativo' if veiculo.get('ativo', False) else 'inativo'
             
-            self.tree.insert('', tk.END, values=valores, tags=(idx, tag))
+            # O tag escondido guardará a placa para edição
+            self.tree.insert('', tk.END, values=valores, tags=(veiculo.get('placa'), tag))
         
         # Configura cores
         self.tree.tag_configure('ativo', background='#d1e7dd')
@@ -210,27 +211,25 @@ class JanelaCadastroVeiculos(tk.Toplevel):
             return
         
         item = self.tree.item(selecao[0])
-        indice = item['tags'][0] if item['tags'] else None
+        placa = item['tags'][0] if item['tags'] else None
         
-        if indice is not None:
-            veiculo = self.gerenciador.df.iloc[indice].to_dict()
-            FormularioVeiculo(
-                self,
-                self.gerenciador,
-                veiculo=veiculo,
-                indice=indice,
-                callback=self.atualizar_tabela
-            )
+        if placa:
+            veiculo = self.gerenciador.obter_veiculo_por_placa(placa)
+            if veiculo:
+                FormularioVeiculo(
+                    self,
+                    self.gerenciador,
+                    veiculo=veiculo,
+                    placa_antiga=placa,
+                    callback=self.atualizar_tabela
+                )
     
     
     def salvar_dados(self):
         """
-        Salva cadastro de veículos
+        Salva cadastro de veículos (Legado, o novo salva automaticamente a cada ação)
         """
-        if self.gerenciador.salvar_dados():
-            messagebox.showinfo("Sucesso", "Cadastro de veículos salvo com sucesso!")
-        else:
-            messagebox.showerror("Erro", "Não foi possível salvar o cadastro")
+        messagebox.showinfo("Sucesso", "O sistema salva automaticamente cada alteração no banco de dados!")
         
     
     def filtrar_veiculos(self):
@@ -243,40 +242,42 @@ class JanelaCadastroVeiculos(tk.Toplevel):
         for item in self.tree.get_children():
             self.tree.delete(item)
         
+        veiculos = self.gerenciador.obter_todos()
+        
         # Se não há termo, mostra todos
-        df = self.gerenciador.df
         if not termo:
             self.atualizar_tabela()
             return
         
         # Filtra por placa, tipo ou descrição
-        df_filtrado = df[
-            df['PLACA'].str.upper().str.contains(termo, na=False) |
-            df['TIPO_VEICULO'].str.upper().str.contains(termo, na=False) |
-            df['DESCRICAO'].str.upper().str.contains(termo, na=False)
+        veiculos_filtrados = [
+            v for v in veiculos 
+            if termo in str(v.get('placa', '')).upper() or 
+               termo in str(v.get('tipo_veiculo', '')).upper() or 
+               termo in str(v.get('descricao', '')).upper()
         ]
         
-        if df_filtrado.empty:
+        if not veiculos_filtrados:
             self.label_stats.config(text="❌ Nenhum veículo encontrado")
             return
         
         # Popula tabela filtrada
-        for idx, row in df_filtrado.iterrows():
+        for veiculo in veiculos_filtrados:
             valores = [
-                row.get('TIPO_VEICULO', ''),
-                row.get('PLACA', ''),
-                row.get('DESCRICAO', ''),
-                row.get('ULTIMA_KM', '0'),
-                row.get('DATA_CADASTRO', ''),
-                'ATIVO' if row.get('ATIVO', False) else 'INATIVO'
+                veiculo.get('tipo_veiculo', ''),
+                veiculo.get('placa', ''),
+                veiculo.get('descricao', ''),
+                veiculo.get('ultima_km', '0'),
+                veiculo.get('data_cadastro', ''),
+                'ATIVO' if veiculo.get('ativo', False) else 'INATIVO'
             ]
             
-            tag = 'ativo' if row.get('ATIVO', False) else 'inativo'
-            self.tree.insert('', tk.END, values=valores, tags=(idx, tag))
+            tag = 'ativo' if veiculo.get('ativo', False) else 'inativo'
+            self.tree.insert('', tk.END, values=valores, tags=(veiculo.get('placa'), tag))
         
         # Atualiza estatísticas
         self.label_stats.config(
-            text=f"🔍 {len(df_filtrado)} veículo(s) encontrado(s) de {len(df)} total"
+            text=f"🔍 {len(veiculos_filtrados)} veículo(s) encontrado(s) de {len(veiculos)} total"
         )
     
     
@@ -293,12 +294,12 @@ class FormularioVeiculo(tk.Toplevel):
     Formulário para adicionar/editar veículo
     """
     
-    def __init__(self, parent, gerenciador, veiculo=None, indice=None, callback=None):
+    def __init__(self, parent, gerenciador, veiculo=None, placa_antiga=None, callback=None):
         super().__init__(parent)
         
         self.gerenciador = gerenciador
         self.veiculo = veiculo
-        self.indice = indice
+        self.placa_antiga = placa_antiga
         self.callback = callback
         
         # Configura janela
@@ -410,12 +411,12 @@ class FormularioVeiculo(tk.Toplevel):
         """
         Preenche formulário com dados existentes
         """
-        self.combo_tipo.set(veiculo.get('TIPO_VEICULO', ''))
-        self.entry_placa.insert(0, veiculo.get('PLACA', ''))
-        self.entry_descricao.insert(0, veiculo.get('DESCRICAO', ''))
+        self.combo_tipo.set(veiculo.get('tipo_veiculo', ''))
+        self.entry_placa.insert(0, veiculo.get('placa', ''))
+        self.entry_descricao.insert(0, veiculo.get('descricao', ''))
         
         if hasattr(self, 'combo_status'):
-            status = 'ATIVO' if veiculo.get('ATIVO', False) else 'INATIVO'
+            status = 'ATIVO' if veiculo.get('ativo', False) else 'INATIVO'
             self.combo_status.set(status)
     
     
@@ -461,7 +462,7 @@ class FormularioVeiculo(tk.Toplevel):
             ativo = self.combo_status.get() == 'ATIVO'
             
             sucesso, mensagem = self.gerenciador.atualizar_veiculo(
-                self.indice, tipo, placa, descricao, ativo
+                self.placa_antiga, tipo, placa, descricao, ativo
             )
             
             if sucesso:

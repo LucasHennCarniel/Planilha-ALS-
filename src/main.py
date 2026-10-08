@@ -1,4 +1,4 @@
-﻿"""
+"""
 Sistema de Gestão de Manutenção de Frota - ALS
 Interface Gráfica Principal
 """
@@ -25,840 +25,15 @@ sys.path.insert(0, application_path)
 # Define caminho absoluto para o banco de dados
 DB_PATH = os.path.join(base_path, 'data', 'sistema_als.db')
 
-from src.database import DatabaseManager
+from src.controllers.manutencao_controller import ManutencaoController
 from src.utils import formatar_data_br, validar_data, validar_numero, limpar_texto, gerar_relatorio_pdf, gerar_relatorio_word
-from src.veiculos import GerenciadorVeiculos
-from src.interface_veiculos import JanelaCadastroVeiculos
-from src.destinos import GerenciadorDestinos
+from src.controllers.veiculo_controller import VeiculoController
+from src.views.form_veiculos import JanelaCadastroVeiculos
+from src.controllers.destino_controller import DestinoController
 
 
-class FormularioRegistro(tk.Toplevel):
-    """
-    Formulário para adicionar/editar registros
-    """
-    
-    def __init__(self, parent, db, gerenciador_veiculos, gerenciador_destinos, registro=None, callback=None):
-        super().__init__(parent)
-        
-        self.db = db
-        self.gerenciador_veiculos = gerenciador_veiculos
-        self.gerenciador_destinos = gerenciador_destinos
-        self.registro = registro
-        self.callback = callback
-        self.resultado = None
-        
-        # Configura janela
-        self.title("Novo Registro" if registro is None else "Editar Registro")
-        self.geometry("800x700")
-        self.resizable(False, False)
-        
-        # Centraliza janela
-        self.transient(parent)
-        self.grab_set()
-        
-        self.criar_formulario()
-        
-        # Se é edição, preenche dados
-        if registro is not None:
-            self.preencher_dados(registro)
-    
-    
-    def criar_formulario(self):
-        """
-        Cria campos do formulário
-        """
-        # Frame principal com scroll
-        main_frame = ttk.Frame(self, padding="20")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Título
-        titulo = "Novo Registro de Manutenção" if self.registro is None else "Editar Registro"
-        ttk.Label(
-            main_frame, 
-            text=titulo,
-            font=('Arial', 14, 'bold')
-        ).grid(row=0, column=0, columnspan=2, pady=(0, 20))
-        
-        # Dicionário para armazenar widgets
-        self.campos = {}
-        
-        # Campo especial de seleção de veículo (no topo)
-        row = 1
-        
-        # Seletor de Veículo Cadastrado COM BUSCA
-        ttk.Label(
-            main_frame,
-            text="🚛 Buscar Veículo:",
-            font=('Arial', 10, 'bold')
-        ).grid(row=row, column=0, sticky=tk.W, pady=5)
-        
-        frame_veiculo = ttk.Frame(main_frame)
-        frame_veiculo.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-        
-        # Entry com autocomplete (substitui Combobox readonly)
-        self.entry_busca_veiculo = ttk.Entry(frame_veiculo, width=35, font=('Arial', 10))
-        self.entry_busca_veiculo.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
-        # Listbox flutuante para resultados
-        self.frame_resultados = tk.Frame(main_frame, bg='white', relief=tk.SOLID, borderwidth=1)
-        self.listbox_veiculos = tk.Listbox(
-            self.frame_resultados,
-            height=6,
-            font=('Arial', 9),
-            activestyle='dotbox',
-            relief=tk.FLAT
-        )
-        self.listbox_veiculos.pack(fill=tk.BOTH, expand=True)
-        
-        # Scrollbar para listbox
-        scroll_listbox = ttk.Scrollbar(self.frame_resultados, orient=tk.VERTICAL, command=self.listbox_veiculos.yview)
-        scroll_listbox.pack(side=tk.RIGHT, fill=tk.Y)
-        self.listbox_veiculos.config(yscrollcommand=scroll_listbox.set)
-        
-        # Variável para controlar seleção
-        self.veiculo_selecionado = None
-        self.lista_veiculos_completa = []
-        
-        # Binds para autocomplete
-        self.entry_busca_veiculo.bind('<KeyRelease>', self.filtrar_veiculos)
-        self.entry_busca_veiculo.bind('<FocusIn>', lambda e: self.mostrar_resultados())
-        self.entry_busca_veiculo.bind('<FocusOut>', lambda e: self.root.after(200, self.esconder_resultados))
-        self.entry_busca_veiculo.bind('<Down>', lambda e: self.listbox_veiculos.focus_set())
-        self.listbox_veiculos.bind('<Return>', lambda e: self.selecionar_veiculo_lista())
-        self.listbox_veiculos.bind('<Double-Button-1>', lambda e: self.selecionar_veiculo_lista())
-        self.listbox_veiculos.bind('<Up>', lambda e: self.navegar_lista('up'))
-        self.listbox_veiculos.bind('<Down>', lambda e: self.navegar_lista('down'))
-        
-        # Carrega lista inicial
-        self.atualizar_lista_veiculos()
-        
-        ttk.Button(
-            frame_veiculo,
-            text="📋",
-            width=3,
-            command=self.abrir_cadastro_veiculos
-        ).pack(side=tk.LEFT, padx=(5, 0))
-        
-        row += 1
-        
-        # Separador
-        ttk.Separator(main_frame, orient='horizontal').grid(
-            row=row, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10
-        )
-        row += 1
-        
-        # Define campos do formulário
-        campos_config = [
-            ('DATA', 'Data:', 'entry'),
-            ('PLACA', 'Placa:', 'entry_readonly'),
-            ('KM', 'KM:', 'entry'),
-            ('VEÍCULO', 'Tipo:', 'entry_readonly'),
-            ('DESTINO PROGRAMADO', 'Destino Programado:', 'combo_com_adicionar'),
-            ('SERVIÇO A EXECUTAR', 'Serviço a Executar:', 'text'),
-            ('STATUS', 'Status:', 'combo', ['EM TRÂNSITO', 'EM SERVIÇO', 'FINALIZADO']),
-            ('DATA ENTRADA', 'Data Entrada:', 'entry'),
-            ('DATA SAÍDA', 'Data Saída:', 'entry'),
-            ('NR° OF', 'NRº OF:', 'entry'),
-            ('OBS', 'Observações:', 'text'),
-        ]
-        
-        for campo_config in campos_config:
-            campo_nome = campo_config[0]
-            campo_label = campo_config[1]
-            campo_tipo = campo_config[2]
-            
-            # Label
-            ttk.Label(
-                main_frame, 
-                text=campo_label,
-                font=('Arial', 10, 'bold')
-            ).grid(row=row, column=0, sticky=tk.W, pady=5)
-            
-            # Widget de entrada
-            if campo_tipo == 'entry':
-                widget = ttk.Entry(main_frame, width=40)
-                widget.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-            
-            elif campo_tipo == 'entry_readonly':
-                widget = ttk.Entry(main_frame, width=40, state='readonly')
-                widget.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-            
-            elif campo_tipo == 'combo_com_adicionar':
-                # Frame especial para destino com botão [+] e [X]
-                frame_destino = ttk.Frame(main_frame)
-                frame_destino.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-                
-                widget = ttk.Combobox(
-                    frame_destino,
-                    width=32,
-                    values=self.gerenciador_destinos.obter_destinos_ativos()
-                )
-                widget.pack(side=tk.LEFT)
-                
-                ttk.Button(
-                    frame_destino,
-                    text="[+]",
-                    width=3,
-                    command=self.adicionar_novo_destino
-                ).pack(side=tk.LEFT, padx=(5, 0))
-                
-                ttk.Button(
-                    frame_destino,
-                    text="[X]",
-                    width=3,
-                    command=self.excluir_destino_selecionado
-                ).pack(side=tk.LEFT, padx=(2, 0))
-                
-            elif campo_tipo == 'combo':
-                valores = campo_config[3] if len(campo_config) > 3 else []
-                widget = ttk.Combobox(main_frame, width=38, values=valores)
-                widget.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-                
-            elif campo_tipo == 'text':
-                frame_text = ttk.Frame(main_frame)
-                frame_text.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-                
-                widget = tk.Text(frame_text, height=3, width=40, font=('Arial', 9))
-                widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-                
-                scroll = ttk.Scrollbar(frame_text, command=widget.yview)
-                scroll.pack(side=tk.RIGHT, fill=tk.Y)
-                widget.config(yscrollcommand=scroll.set)
-            
-            self.campos[campo_nome] = widget
-            row += 1
-        
-        # Frame de botões
-        frame_botoes = ttk.Frame(main_frame)
-        frame_botoes.grid(row=row, column=0, columnspan=2, pady=20)
-        
-        ttk.Button(
-            frame_botoes,
-            text="💾  Salvar",
-            command=self.salvar,
-            width=15
-        ).pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(
-            frame_botoes,
-            text="❌  Cancelar",
-            command=self.cancelar,
-            width=15
-        ).pack(side=tk.LEFT, padx=5)
-        
-        # Info sobre cálculos automáticos
-        ttk.Label(
-            main_frame,
-            text="ℹ️ Dica: Selecione um veículo cadastrado ou preencha manualmente. Status e Dias em Manutenção são calculados automaticamente.",
-            font=('Arial', 8, 'italic'),
-            foreground='gray'
-        ).grid(row=row+1, column=0, columnspan=2, pady=10)
-        
-        # Adiciona máscara automática para campos de data
-        for campo in ['DATA', 'DATA ENTRADA', 'DATA SAÍDA']:
-            if campo in self.campos:
-                self.campos[campo].bind('<KeyRelease>', self.mascara_data)
-
-    def mascara_data(self, event):
-        widget = event.widget
-        valor = widget.get().replace('/', '')
-        novo = ''
-        for i, c in enumerate(valor):
-            if i == 2 or i == 4:
-                novo += '/'
-            novo += c
-        # Limita a 10 caracteres (DD/MM/AAAA)
-        novo = novo[:10]
-        widget.delete(0, tk.END)
-        widget.insert(0, novo)
-    
-    
-    def ao_selecionar_veiculo(self, event=None):
-        """
-        Quando um veículo cadastrado é selecionado, preenche dados automaticamente
-        """
-        # Para compatibilidade com busca antiga
-        if hasattr(self, 'combo_veiculo_cadastrado'):
-            selecao = self.combo_veiculo_cadastrado.get()
-        else:
-            # Nova busca com entry
-            if not self.veiculo_selecionado:
-                return
-            selecao = self.veiculo_selecionado
-        
-        if not selecao:
-            return
-        
-        # Extrai placa da seleção
-        placa = self.gerenciador_veiculos.extrair_placa_da_selecao(selecao)
-        
-        # Busca dados do veículo
-        veiculo = self.gerenciador_veiculos.obter_veiculo_por_placa(placa)
-        
-        if veiculo:
-            # Preenche PLACA (readonly)
-            self.campos['PLACA'].config(state='normal')
-            self.campos['PLACA'].delete(0, tk.END)
-            self.campos['PLACA'].insert(0, veiculo['PLACA'])
-            self.campos['PLACA'].config(state='readonly')
-            
-            # Preenche VEÍCULO/Tipo (readonly)
-            self.campos['VEÍCULO'].config(state='normal')
-            self.campos['VEÍCULO'].delete(0, tk.END)
-            self.campos['VEÍCULO'].insert(0, veiculo['TIPO_VEICULO'])
-            self.campos['VEÍCULO'].config(state='readonly')
-            
-            # Preenche KM com última KM registrada
-            self.campos['KM'].delete(0, tk.END)
-            ultima_km = veiculo.get('ULTIMA_KM', 0)
-            self.campos['KM'].insert(0, str(ultima_km))
-            
-            # Foca no próximo campo
-            self.campos['KM'].focus()
-    
-    
-    def atualizar_lista_veiculos(self):
-        """Atualiza lista completa de veículos no formato PLACA - TIPO"""
-        veiculos = self.gerenciador_veiculos.obter_veiculos_ativos()
-        self.lista_veiculos_completa = veiculos
-        self.listbox_veiculos.delete(0, tk.END)
-        for veiculo in veiculos:
-            self.listbox_veiculos.insert(tk.END, veiculo)
-    
-    
-    def filtrar_veiculos(self, event=None):
-        """Filtra veículos conforme digitação"""
-        termo_busca = self.entry_busca_veiculo.get().upper()
-        
-        # Limpa listbox
-        self.listbox_veiculos.delete(0, tk.END)
-        
-        if not termo_busca:
-            # Mostra todos
-            for veiculo in self.lista_veiculos_completa:
-                self.listbox_veiculos.insert(tk.END, veiculo)
-        else:
-            # Filtra por placa ou tipo
-            for veiculo in self.lista_veiculos_completa:
-                if termo_busca in veiculo.upper():
-                    self.listbox_veiculos.insert(tk.END, veiculo)
-        
-        # Mostra resultados
-        if self.listbox_veiculos.size() > 0:
-            self.mostrar_resultados()
-    
-    
-    def mostrar_resultados(self):
-        """Mostra listbox de resultados"""
-        if self.listbox_veiculos.size() > 0:
-            self.frame_resultados.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=5)
-    
-    
-    def esconder_resultados(self):
-        """Esconde listbox de resultados"""
-        self.frame_resultados.grid_forget()
-    
-    
-    def selecionar_veiculo_lista(self):
-        """Seleciona veículo da listbox e preenche campos automaticamente"""
-        selecao = self.listbox_veiculos.curselection()
-        if selecao:
-            veiculo_texto = self.listbox_veiculos.get(selecao[0])
-            self.entry_busca_veiculo.delete(0, tk.END)
-            self.entry_busca_veiculo.insert(0, veiculo_texto)
-            self.veiculo_selecionado = veiculo_texto
-            self.esconder_resultados()
-            
-            # Extrai placa do texto selecionado (formato: PLACA - TIPO - DESCRIÇÃO)
-            placa = self.gerenciador_veiculos.extrair_placa_da_selecao(veiculo_texto)
-            
-            # Busca dados completos do veículo
-            veiculo = self.gerenciador_veiculos.obter_veiculo_por_placa(placa)
-            
-            if veiculo:
-                # Preenche PLACA automaticamente
-                self.campos['PLACA'].config(state='normal')
-                self.campos['PLACA'].delete(0, tk.END)
-                self.campos['PLACA'].insert(0, veiculo['PLACA'])
-                self.campos['PLACA'].config(state='readonly')
-                
-                # Preenche TIPO automaticamente
-                self.campos['VEÍCULO'].config(state='normal')
-                self.campos['VEÍCULO'].delete(0, tk.END)
-                self.campos['VEÍCULO'].insert(0, veiculo['TIPO_VEICULO'])
-                self.campos['VEÍCULO'].config(state='readonly')
-                
-                # Preenche KM com última KM registrada
-                self.campos['KM'].delete(0, tk.END)
-                ultima_km = veiculo.get('ULTIMA_KM', 0)
-                self.campos['KM'].insert(0, str(ultima_km))
-                
-                # Foca no campo DATA para continuar preenchimento
-                self.campos['DATA'].focus()
-    
-    
-    def navegar_lista(self, direcao):
-        """Navega na listbox com teclado"""
-        selecao_atual = self.listbox_veiculos.curselection()
-        
-        if not selecao_atual:
-            self.listbox_veiculos.selection_set(0)
-            return
-        
-        indice = selecao_atual[0]
-        
-        if direcao == 'up' and indice > 0:
-            self.listbox_veiculos.selection_clear(indice)
-            self.listbox_veiculos.selection_set(indice - 1)
-            self.listbox_veiculos.see(indice - 1)
-        elif direcao == 'down' and indice < self.listbox_veiculos.size() - 1:
-            self.listbox_veiculos.selection_clear(indice)
-            self.listbox_veiculos.selection_set(indice + 1)
-            self.listbox_veiculos.see(indice + 1)
-    
-    
-    def adicionar_novo_destino(self):
-        """
-        Abre pop-up para adicionar novo destino
-        """
-        # Cria janela pop-up
-        dialog = tk.Toplevel(self)
-        dialog.title("Adicionar Novo Destino")
-        dialog.geometry("400x180")
-        dialog.transient(self)
-        dialog.grab_set()
-        
-        # Centraliza
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (200)
-        y = (dialog.winfo_screenheight() // 2) - (90)
-        dialog.geometry(f"400x180+{x}+{y}")
-        
-        # Frame principal
-        frame = ttk.Frame(dialog, padding="20")
-        frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Título
-        ttk.Label(
-            frame,
-            text="📍 Cadastrar Novo Destino",
-            font=('Arial', 12, 'bold')
-        ).pack(pady=(0, 15))
-        
-        # Label e entrada
-        ttk.Label(
-            frame,
-            text="Nome do Destino:",
-            font=('Arial', 10)
-        ).pack(anchor=tk.W, pady=(0, 5))
-        
-        entry_destino = ttk.Entry(frame, width=40, font=('Arial', 10))
-        entry_destino.pack(fill=tk.X, pady=(0, 15))
-        entry_destino.focus()
-        
-        # Frame de botões
-        frame_botoes = ttk.Frame(frame)
-        frame_botoes.pack()
-        
-        def salvar():
-            nome = entry_destino.get().strip()
-            if not nome:
-                messagebox.showwarning("Aviso", "Digite o nome do destino!", parent=dialog)
-                return
-            
-            sucesso, mensagem = self.gerenciador_destinos.adicionar_destino(nome)
-            
-            if sucesso:
-                # Atualiza lista no combobox
-                self.campos['DESTINO PROGRAMADO']['values'] = self.gerenciador_destinos.obter_destinos_ativos()
-                # Seleciona o novo destino
-                self.campos['DESTINO PROGRAMADO'].set(nome.upper())
-                messagebox.showinfo("Sucesso", mensagem, parent=dialog)
-                dialog.destroy()
-            else:
-                messagebox.showerror("Erro", mensagem, parent=dialog)
-        
-        def cancelar():
-            dialog.destroy()
-        
-        # Bind Enter para salvar
-        entry_destino.bind('<Return>', lambda e: salvar())
-        
-        ttk.Button(
-            frame_botoes,
-            text="💾  Salvar",
-            command=salvar,
-            width=15
-        ).pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(
-            frame_botoes,
-            text="❌  Cancelar",
-            command=cancelar,
-            width=15
-        ).pack(side=tk.LEFT, padx=5)
-    
-    
-    def gerenciar_destinos(self):
-        """
-        Abre janela para gerenciar destinos com botão X dinâmico
-        """
-        from src.interface_destinos import JanelaGerenciarDestinos
-        
-        def callback():
-            # Atualiza lista de destinos no combobox
-            self.campos['DESTINO PROGRAMADO']['values'] = self.gerenciador_destinos.obter_destinos_ativos()
-        
-        JanelaGerenciarDestinos(self, self.gerenciador_destinos, callback=callback)
-    
-    
-    def excluir_destino_selecionado(self):
-        """
-        Exclui o destino atualmente selecionado no combo
-        """
-        combo_destino = self.campos.get('DESTINO PROGRAMADO')
-        if not combo_destino:
-            return
-        
-        destino_selecionado = combo_destino.get().strip()
-        
-        if not destino_selecionado:
-            messagebox.showwarning(
-                "Aviso",
-                "Selecione um destino para excluir!",
-                parent=self
-            )
-            return
-        
-        # Confirmação
-        resposta = messagebox.askyesno(
-            "Confirmar Exclusão",
-            f"Deseja realmente excluir o destino:\n\n'{destino_selecionado}'?\n\n"
-            "Esta ação não pode ser desfeita.",
-            parent=self
-        )
-        
-        if not resposta:
-            return
-        
-        # Busca o índice do destino no DataFrame
-        df = self.gerenciador_destinos.df
-        indices = df[df['NOME_DESTINO'].str.upper() == destino_selecionado.upper()].index
-        
-        if len(indices) == 0:
-            messagebox.showerror(
-                "Erro",
-                "Destino não encontrado no cadastro!",
-                parent=self
-            )
-            return
-        
-        # Exclui o destino
-        sucesso, mensagem = self.gerenciador_destinos.excluir_destino(indices[0])
-        
-        if sucesso:
-            messagebox.showinfo("Sucesso", "Destino excluído com sucesso!", parent=self)
-            
-            # Atualiza a lista no combo
-            novos_destinos = self.gerenciador_destinos.obter_destinos_ativos()
-            combo_destino['values'] = novos_destinos
-            combo_destino.set('')  # Limpa seleção
-        else:
-            messagebox.showerror("Erro", mensagem, parent=self)
-    
-    
-    def abrir_cadastro_veiculos(self):
-        """
-        Abre janela de cadastro de veículos
-        """
-        JanelaCadastroVeiculos(self, self.gerenciador_veiculos)
-        
-        # Atualiza lista após fechar cadastro
-        if hasattr(self, 'combo_veiculo_cadastrado'):
-            self.combo_veiculo_cadastrado['values'] = self.gerenciador_veiculos.obter_veiculos_ativos()
-        else:
-            # Nova busca com entry
-            self.atualizar_lista_veiculos()
-    
-    
-    def preencher_dados(self, registro):
-        """
-        Preenche formulário com dados existentes
-        """
-        for campo_nome, widget in self.campos.items():
-            valor = registro.get(campo_nome, '')
-            # Corrige valores NaN do pandas
-            if valor is None or (isinstance(valor, float) and pd.isna(valor)):
-                valor = ''
-            if isinstance(widget, tk.Text):
-                widget.delete('1.0', tk.END)
-                widget.insert('1.0', str(valor) if valor else '')
-            else:
-                widget.config(state='normal')
-                widget.delete(0, tk.END)
-                # Formata datas
-                if 'DATA' in campo_nome and valor:
-                    valor = formatar_data_br(valor)
-                widget.insert(0, str(valor) if valor else '')
-                # Restaura readonly se necessário
-                if widget.cget('state') == 'readonly' or campo_nome in ['PLACA', 'VEÍCULO']:
-                    widget.config(state='readonly')
-    
-    
-    def obter_dados(self):
-        """
-        Obtém dados do formulário
-        """
-        dados = {}
-        
-        for campo_nome, widget in self.campos.items():
-            if isinstance(widget, tk.Text):
-                valor = widget.get('1.0', tk.END).strip()
-            else:
-                valor = widget.get().strip()
-            
-            dados[campo_nome] = valor
-        
-        return dados
-    
-    
-    def validar_dados(self, dados):
-        """
-        Valida dados do formulário
-        """
-        erros = []
-        
-        # Campos obrigatórios
-        if not dados.get('PLACA'):
-            erros.append("• Placa é obrigatória")
-        
-        if not dados.get('DATA ENTRADA'):
-            erros.append("• Data de Entrada é obrigatória")
-        
-        # KM e N° OF são opcionais apenas quando status = "EM TRÂNSITO"
-        status = dados.get('STATUS', '').upper()
-        if status != 'EM TRÂNSITO':
-            # Para outros status, KM e N° OF podem ser validados se necessário
-            pass  # Mantém opcional para todos
-        
-        # Valida formato de datas
-        for campo in ['DATA', 'DATA ENTRADA', 'DATA SAÍDA']:
-            if dados.get(campo):
-                if not validar_data(dados[campo]):
-                    erros.append(f"• {campo}: formato inválido (use DD/MM/AAAA)")
-        
-        return erros
-    
-    
-    def salvar(self):
-        """
-        Salva dados do formulário
-        """
-        dados = self.obter_dados()
-        
-        # Valida
-        erros = self.validar_dados(dados)
-        if erros:
-            messagebox.showerror(
-                "Erro de Validação",
-                "Corrija os seguintes erros:\n\n" + "\n".join(erros)
-            )
-            return
-        
-        # Calcula campos automáticos
-        from src.utils import calcular_dias_manutencao, calcular_status
-        
-        dados['TOTAL DE DIAS EM MANUTENÇÃO'] = calcular_dias_manutencao(
-            dados.get('DATA ENTRADA'),
-            dados.get('DATA SAÍDA')
-        )
-        
-        # IMPORTANTE: Pega o status selecionado pelo usuário
-        status_selecionado = dados.get('STATUS', '').strip().upper()
-        
-        # Se o usuário selecionou um status manualmente, USA ELE
-        # Só calcula automaticamente se não tiver status selecionado
-        if status_selecionado:
-            dados['STATUS'] = status_selecionado
-        else:
-            dados['STATUS'] = calcular_status(
-                dados.get('DATA ENTRADA'),
-                dados.get('DATA SAÍDA'),
-                ''
-            )
-        
-        # Atualiza KM do veículo no cadastro
-        if dados.get('PLACA') and dados.get('KM'):
-            try:
-                km = float(dados.get('KM', 0))
-                self.gerenciador_veiculos.atualizar_km(dados['PLACA'], km)
-                self.gerenciador_veiculos.salvar_dados()
-            except:
-                pass  # Se não conseguir atualizar, continua normalmente
-        
-        self.resultado = dados
-        
-        if self.callback:
-            self.callback(dados)
-        
-        self.destroy()
-    
-    
-    def cancelar(self):
-        """
-        Cancela operação
-        """
-        self.resultado = None
-        self.destroy()
-
-
-class FormularioNota(tk.Toplevel):
-    """Formulário para adicionar/editar notas"""
-    
-    def __init__(self, parent, db, gerenciador_veiculos, nota=None, callback=None):
-        super().__init__(parent)
-        
-        self.db = db
-        self.gerenciador_veiculos = gerenciador_veiculos
-        self.nota = nota
-        self.callback = callback
-        
-        self.title("Nova Nota" if nota is None else "Editar Nota")
-        self.geometry("600x400")
-        self.resizable(False, False)
-        
-        self.transient(parent)
-        self.grab_set()
-        
-        self.criar_formulario()
-        
-        if nota is not None:
-            self.preencher_dados(nota)
-    
-    
-    def criar_formulario(self):
-        """Cria campos do formulário"""
-        main_frame = ttk.Frame(self, padding="20")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        ttk.Label(
-            main_frame,
-            text="Nova Nota" if self.nota is None else "Editar Nota",
-            font=('Arial', 14, 'bold')
-        ).grid(row=0, column=0, columnspan=2, pady=(0, 20))
-        
-        self.campos = {}
-        
-        # Data Programada
-        ttk.Label(main_frame, text="📅 Data Programada:", font=('Arial', 10, 'bold')).grid(row=1, column=0, sticky=tk.W, pady=5)
-        self.campos['data_programada'] = ttk.Entry(main_frame, width=30)
-        self.campos['data_programada'].grid(row=1, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-        self.campos['data_programada'].insert(0, datetime.now().strftime('%d/%m/%Y'))
-        
-        # Placa
-        ttk.Label(main_frame, text="🚛 Placa:", font=('Arial', 10, 'bold')).grid(row=2, column=0, sticky=tk.W, pady=5)
-        self.campos['placa'] = ttk.Combobox(
-            main_frame,
-            width=28,
-            values=self.gerenciador_veiculos.obter_veiculos_ativos()
-        )
-        self.campos['placa'].grid(row=2, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-        
-        # Status
-        ttk.Label(main_frame, text="📊 Status:", font=('Arial', 10, 'bold')).grid(row=3, column=0, sticky=tk.W, pady=5)
-        self.campos['status'] = ttk.Combobox(
-            main_frame,
-            width=28,
-            values=['PENDENTE', 'PROGRAMADO', 'EM ANDAMENTO', 'CONCLUÍDO', 'CANCELADO'],
-            state='readonly'
-        )
-        self.campos['status'].grid(row=3, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-        self.campos['status'].set('PENDENTE')
-        
-        # Observação
-        ttk.Label(main_frame, text="📝 Observação:", font=('Arial', 10, 'bold')).grid(row=4, column=0, sticky=tk.W, pady=5)
-        frame_obs = ttk.Frame(main_frame)
-        frame_obs.grid(row=4, column=1, sticky=(tk.W, tk.E), pady=5, padx=5)
-        
-        self.campos['observacao'] = tk.Text(frame_obs, height=8, width=40, font=('Arial', 10))
-        self.campos['observacao'].pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        scroll_obs = ttk.Scrollbar(frame_obs, command=self.campos['observacao'].yview)
-        scroll_obs.pack(side=tk.RIGHT, fill=tk.Y)
-        self.campos['observacao'].config(yscrollcommand=scroll_obs.set)
-        
-        # Botões
-        frame_botoes = ttk.Frame(main_frame)
-        frame_botoes.grid(row=5, column=0, columnspan=2, pady=20)
-        
-        ttk.Button(frame_botoes, text="💾 Salvar", command=self.salvar).pack(side=tk.LEFT, padx=5)
-        ttk.Button(frame_botoes, text="❌ Cancelar", command=self.destroy).pack(side=tk.LEFT, padx=5)
-    
-    
-    def preencher_dados(self, nota):
-        """Preenche formulário com dados da nota"""
-        self.campos['data_programada'].delete(0, tk.END)
-        self.campos['data_programada'].insert(0, nota['data_programada'])
-        
-        self.campos['placa'].set(nota['placa'])
-        
-        if nota['status']:
-            self.campos['status'].set(nota['status'])
-        
-        if nota['observacao']:
-            self.campos['observacao'].delete('1.0', tk.END)
-            self.campos['observacao'].insert('1.0', nota['observacao'])
-    
-    
-    def salvar(self):
-        """Salva nota no banco"""
-        data_prog = self.campos['data_programada'].get().strip()
-        placa_full = self.campos['placa'].get().strip()
-        status = self.campos['status'].get().strip()
-        obs = self.campos['observacao'].get('1.0', tk.END).strip()
-        
-        # Validações
-        if not data_prog:
-            messagebox.showwarning("Atenção", "Informe a data programada!")
-            return
-        
-        if not placa_full:
-            messagebox.showwarning("Atenção", "Selecione uma placa!")
-            return
-        
-        # Extrai placa do formato "TIPO - PLACA"
-        placa = self.gerenciador_veiculos.extrair_placa_da_selecao(placa_full)
-        
-        try:
-            cursor = self.db.conn.cursor()
-            
-            if self.nota is None:
-                # Nova nota
-                cursor.execute("""
-                    INSERT INTO notas (data_programada, placa, status, observacao, data_criacao)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (data_prog, placa, status, obs, datetime.now().strftime('%d/%m/%Y %H:%M:%S')))
-            else:
-                # Editar nota
-                cursor.execute("""
-                    UPDATE notas
-                    SET data_programada = ?, placa = ?, status = ?, observacao = ?
-                    WHERE id = ?
-                """, (data_prog, placa, status, obs, self.nota['id']))
-            
-            self.db.conn.commit()
-            messagebox.showinfo("Sucesso", "Nota salva com sucesso!")
-            
-            if self.callback:
-                self.callback()
-            
-            self.destroy()
-            
-        except sqlite3.IntegrityError:
-            messagebox.showerror("Erro", "Já existe uma nota para esta placa nesta data!")
-        except Exception as e:
-            messagebox.showerror("Erro", f"Erro ao salvar nota: {e}")
-
+from src.views.form_registro import FormularioRegistro
+from src.views.form_nota import FormularioNota
 
 class SistemaManutencao:
     """
@@ -872,7 +47,7 @@ class SistemaManutencao:
         
         # Inicializa banco de dados
         try:
-            self.db = DatabaseManager(DB_PATH)
+            self.db = ManutencaoController()
         except Exception as e:
             messagebox.showerror(
                 "Erro ao Inicializar",
@@ -880,25 +55,28 @@ class SistemaManutencao:
             )
             sys.exit(1)
         
+        from src.controllers.nota_controller import NotaController
+        self.nota_controller = NotaController()
+        
         # Inicializa gerenciador de veículos
         try:
-            self.gerenciador_veiculos = GerenciadorVeiculos(DB_PATH)
+            self.gerenciador_veiculos = VeiculoController()
         except Exception as e:
             messagebox.showerror(
                 "Erro ao Inicializar",
                 f"Não foi possível carregar o cadastro de veículos:\n{e}"
             )
-            self.gerenciador_veiculos = GerenciadorVeiculos(DB_PATH)  # Cria novo vazio
+            self.gerenciador_veiculos = VeiculoController()  # Cria novo vazio
         
         # Inicializa gerenciador de destinos
         try:
-            self.gerenciador_destinos = GerenciadorDestinos()
+            self.gerenciador_destinos = DestinoController()
         except Exception as e:
             messagebox.showerror(
                 "Erro ao Inicializar",
                 f"Não foi possível carregar o cadastro de destinos:\n{e}"
             )
-            self.gerenciador_destinos = GerenciadorDestinos()  # Cria novo vazio
+            self.gerenciador_destinos = DestinoController()  # Cria novo vazio
         
         # Variável para índice selecionado
         self.indice_selecionado = None
@@ -1562,13 +740,13 @@ class SistemaManutencao:
         """
         def callback(dados):
             try:
-                if self.db.adicionar_registro(dados):
-                    if self.db.salvar_dados():
-                        self.atualizar_tabela()
-                        self.atualizar_estatisticas()
-                        messagebox.showinfo("Sucesso", "Registro adicionado com sucesso!")
-                    else:
-                        messagebox.showerror("Erro", "Registro adicionado mas não foi possível salvar no banco de dados")
+                sucesso, msg = self.db.adicionar_registro(dados)
+                if sucesso:
+                    self.atualizar_tabela()
+                    self.atualizar_estatisticas()
+                    messagebox.showinfo("Sucesso", msg)
+                else:
+                    messagebox.showerror("Erro", msg)
             except Exception as e:
                 messagebox.showerror("Erro ao adicionar registro", str(e))
         FormularioRegistro(self.root, self.db, self.gerenciador_veiculos, self.gerenciador_destinos, callback=callback)
@@ -1583,15 +761,16 @@ class SistemaManutencao:
             return
         
         registro = self.db.df.iloc[self.indice_selecionado].to_dict()
+        id_registro = registro.get('ID')
         
         def callback(dados):
-            if self.db.atualizar_registro(self.indice_selecionado, dados):
-                if self.db.salvar_dados():
-                    self.atualizar_tabela()
-                    self.atualizar_estatisticas()
-                    messagebox.showinfo("Sucesso", "Registro atualizado com sucesso!")
-                else:
-                    messagebox.showerror("Erro", "Registro atualizado mas não foi possível salvar no banco de dados")
+            sucesso, msg = self.db.atualizar_registro(id_registro, dados)
+            if sucesso:
+                self.atualizar_tabela()
+                self.atualizar_estatisticas()
+                messagebox.showinfo("Sucesso", msg)
+            else:
+                messagebox.showerror("Erro", msg)
         
         FormularioRegistro(self.root, self.db, self.gerenciador_veiculos, self.gerenciador_destinos, registro=registro, callback=callback)
     
@@ -1696,113 +875,9 @@ class SistemaManutencao:
     
     
     def gerar_relatorio(self):
-        """
-        Gera relatório estatístico com opções de formato
-        """
-        from src.utils import gerar_relatorio_pdf, gerar_relatorio_word
-        
-        # Janela de opções
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Gerar Relatório")
-        dialog.geometry("400x250")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        # Centralizar
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (400 // 2)
-        y = (dialog.winfo_screenheight() // 2) - (250 // 2)
-        dialog.geometry(f"400x250+{x}+{y}")
-        
-        tk.Label(dialog, text="Escolha o formato do relatório:", font=('Arial', 12, 'bold')).pack(pady=20)
-        
-        def gerar_txt():
-            stats = self.db.obter_estatisticas()
-            
-            relatorio = f"""
-╔══════════════════════════════════════════╗
-║       RELATÓRIO DE MANUTENÇÃO - ALS      ║
-╚══════════════════════════════════════════╝
+        from src.views.modal_relatorio import ModalRelatorio
+        ModalRelatorio(self.root, self.db)
 
- ESTATÍSTICAS GERAIS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Total de Registros: {stats['total_registros']}
-Veículos em Serviço: {stats['em_servico']}
-Manutenções Finalizadas: {stats['finalizados']}
-Tempo Médio de Manutenção: {stats['tempo_medio']:.1f} dias
-Placas Únicas: {stats['placas_unicas']}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
-            """
-            
-            arquivo = f"output/Relatorio_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            with open(arquivo, 'w', encoding='utf-8') as f:
-                f.write(relatorio)
-            
-            dialog.destroy()
-            messagebox.showinfo("Relatório Gerado", f"Relatório salvo em:\n{arquivo}")
-        
-        def gerar_pdf_relatorio():
-            stats = self.db.obter_estatisticas()
-            dados = self.db.df.copy()
-            arquivo = f"output/Relatorio_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-            
-            estatisticas = {
-                'total': stats['total_registros'],
-                'em_servico': stats['em_servico'],
-                'finalizados': stats['finalizados'],
-                'tempo_medio': stats['tempo_medio'],
-                'placas_unicas': stats['placas_unicas']
-            }
-            
-            sucesso, resultado = gerar_relatorio_pdf(dados, estatisticas, arquivo)
-            dialog.destroy()
-            
-            if sucesso:
-                messagebox.showinfo("Relatório PDF", f"Relatório PDF salvo em:\n{resultado}")
-            else:
-                messagebox.showerror("Erro", resultado)
-        
-        def gerar_word_relatorio():
-            stats = self.db.obter_estatisticas()
-            dados = self.db.df.copy()
-            arquivo = f"output/Relatorio_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
-            
-            estatisticas = {
-                'total': stats['total_registros'],
-                'em_servico': stats['em_servico'],
-                'finalizados': stats['finalizados'],
-                'tempo_medio': stats['tempo_medio'],
-                'placas_unicas': stats['placas_unicas']
-            }
-            
-            sucesso, resultado = gerar_relatorio_word(dados, estatisticas, arquivo)
-            dialog.destroy()
-            
-            if sucesso:
-                messagebox.showinfo("Relatório Word", f"Relatório Word salvo em:\n{resultado}")
-            else:
-                messagebox.showerror("Erro", resultado)
-        
-        # Botões
-        btn_frame = tk.Frame(dialog)
-        btn_frame.pack(pady=10)
-        
-        tk.Button(btn_frame, text="📄 Texto (.txt)", command=gerar_txt, 
-                 width=20, height=2, bg='#95a5a6', fg='white', font=('Arial', 10, 'bold')).pack(pady=5)
-        
-        tk.Button(btn_frame, text="📕 PDF (.pdf)", command=gerar_pdf_relatorio, 
-                 width=20, height=2, bg='#e74c3c', fg='white', font=('Arial', 10, 'bold')).pack(pady=5)
-        
-        tk.Button(btn_frame, text="📘 Word (.docx)", command=gerar_word_relatorio, 
-                 width=20, height=2, bg='#3498db', fg='white', font=('Arial', 10, 'bold')).pack(pady=5)
-    
-    
-    # ==== MÉTODOS PARA NOTAS === =
-    
     def nova_nota(self):
         """Abre formulário para nova nota"""
         FormularioNota(self.root, self.db, self.gerenciador_veiculos, callback=self.atualizar_notas)
@@ -1822,9 +897,7 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
             return
         
         # Busca dados da nota no banco
-        cursor = self.db.conn.cursor()
-        cursor.execute("SELECT * FROM notas WHERE id = ?", (id_nota,))
-        nota = cursor.fetchone()
+        nota = self.nota_controller.obter_por_id(id_nota)
         
         if nota:
             nota_dict = {
@@ -1851,9 +924,7 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
         id_nota = item['tags'][0] if item['tags'] else None
         
         try:
-            cursor = self.db.conn.cursor()
-            cursor.execute("DELETE FROM notas WHERE id = ?", (id_nota,))
-            self.db.conn.commit()
+            self.nota_controller.excluir_nota(id_nota)
             self.atualizar_notas()
             messagebox.showinfo("Sucesso", "Nota excluída com sucesso!")
         except Exception as e:
@@ -1868,12 +939,14 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
         
         try:
             # Carrega notas do banco
-            cursor = self.db.conn.cursor()
-            cursor.execute("SELECT id, data_programada, placa, status, observacao FROM notas ORDER BY data_programada DESC")
-            notas = cursor.fetchall()
-            
+            notas = self.nota_controller.obter_todas()
+
             for nota in notas:
-                id_nota, data_prog, placa, status, obs = nota
+                id_nota = nota['id']
+                data_prog = nota['data_programada']
+                placa = nota['placa']
+                status = nota['status']
+                obs = nota['observacao']
                 self.tree_notas.insert(
                     '', 
                     'end',
@@ -1885,358 +958,10 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
     
     
     def exportar_dados(self):
-        """Exporta dados com opção de escolher formato (Excel, PDF ou Word)"""
-        # Janela de opções
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Exportar Dados")
-        dialog.geometry("450x350")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        # Centralizar
-        dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - 225
-        y = (dialog.winfo_screenheight() // 2) - 175
-        dialog.geometry(f"450x350+{x}+{y}")
-        
-        frame = ttk.Frame(dialog, padding="20")
-        frame.pack(fill=tk.BOTH, expand=True)
-        
-        ttk.Label(
-            frame,
-            text="📤 Exportar Dados",
-            font=('Arial', 14, 'bold')
-        ).pack(pady=(0, 15))
-        
-        ttk.Label(
-            frame,
-            text="Escolha o formato de exportação:",
-            font=('Arial', 10)
-        ).pack(anchor=tk.W, pady=(0, 10))
-        
-        # Variável para formato
-        formato_var = tk.StringVar(value="excel")
-        
-        # Opções de formato
-        frame_formatos = ttk.Frame(frame)
-        frame_formatos.pack(fill=tk.X, pady=10)
-        
-        ttk.Radiobutton(
-            frame_formatos,
-            text="📊 Excel (.xlsx)",
-            variable=formato_var,
-            value="excel"
-        ).pack(anchor=tk.W, pady=3)
-        
-        ttk.Radiobutton(
-            frame_formatos,
-            text="📄 PDF (.pdf)",
-            variable=formato_var,
-            value="pdf"
-        ).pack(anchor=tk.W, pady=3)
-        
-        ttk.Radiobutton(
-            frame_formatos,
-            text="📝 Word (.docx)",
-            variable=formato_var,
-            value="word"
-        ).pack(anchor=tk.W, pady=3)
-        
-        # Checkbox para usar filtros atuais
-        usar_filtros_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            frame,
-            text="Usar filtros atuais (exportar apenas dados visíveis)",
-            variable=usar_filtros_var
-        ).pack(anchor=tk.W, pady=15)
-        
-        # Info sobre quantidade
-        qtd_total = len(self.db.df)
-        qtd_visivel = len(self.tree.get_children())
-        
-        self.label_info_export = ttk.Label(
-            frame,
-            text=f"📋 Total: {qtd_total} registros | Visíveis: {qtd_visivel} registros",
-            font=('Arial', 9)
-        )
-        self.label_info_export.pack(pady=5)
-        
-        # Botões
-        frame_botoes = ttk.Frame(frame)
-        frame_botoes.pack(pady=20)
-        
-        def executar_exportacao():
-            formato = formato_var.get()
-            usar_filtros = usar_filtros_var.get()
-            dialog.destroy()
-            self._executar_exportacao(formato, usar_filtros)
-        
-        ttk.Button(
-            frame_botoes,
-            text="📤 Exportar",
-            command=executar_exportacao,
-            width=15
-        ).pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(
-            frame_botoes,
-            text="❌ Cancelar",
-            command=dialog.destroy,
-            width=15
-        ).pack(side=tk.LEFT, padx=5)
-    
-    
-    def _executar_exportacao(self, formato, usar_filtros):
-        """Executa a exportação no formato escolhido"""
-        try:
-            # Obtém dados baseado nos filtros
-            if usar_filtros:
-                # Pega os dados visíveis no grid
-                df_exportar = self._obter_dados_grid()
-            else:
-                df_exportar = self.db.df.copy()
-            
-            if df_exportar.empty:
-                messagebox.showwarning("Aviso", "Não há dados para exportar!")
-                return
-            
-            # Define extensão e filtro baseado no formato
-            if formato == "excel":
-                extensao = ".xlsx"
-                filetypes = [("Excel", "*.xlsx")]
-            elif formato == "pdf":
-                extensao = ".pdf"
-                filetypes = [("PDF", "*.pdf")]
-            else:  # word
-                extensao = ".docx"
-                filetypes = [("Word", "*.docx")]
-            
-            # Solicita local para salvar
-            arquivo = filedialog.asksaveasfilename(
-                defaultextension=extensao,
-                filetypes=filetypes,
-                initialfile=f"manutencao_als_{datetime.now().strftime('%Y%m%d_%H%M%S')}{extensao}"
-            )
-            
-            if not arquivo:
-                return
-            
-            # Executa exportação baseada no formato
-            if formato == "excel":
-                self._exportar_excel(df_exportar, arquivo)
-            elif formato == "pdf":
-                self._exportar_pdf(df_exportar, arquivo)
-            else:  # word
-                self._exportar_word(df_exportar, arquivo)
-                
-        except Exception as e:
-            messagebox.showerror("Erro", f"Erro ao exportar: {e}")
-    
-    
-    def _obter_dados_grid(self):
-        """Obtém os dados atualmente visíveis no grid na ordem das colunas"""
-        # Colunas do grid
-        colunas_grid = list(self.tree['columns'])
-        
-        # Lista para armazenar dados
-        dados = []
-        
-        # Percorre itens do grid
-        for item in self.tree.get_children():
-            valores = self.tree.item(item)['values']
-            linha = {}
-            for i, col in enumerate(colunas_grid):
-                if i < len(valores):
-                    linha[col] = valores[i]
-                else:
-                    linha[col] = ''
-            dados.append(linha)
-        
-        return pd.DataFrame(dados)
-    
-    
-    def _exportar_excel(self, df, arquivo):
-        """Exporta para Excel"""
-        try:
-            # Cria writer do Excel com formatação
-            with pd.ExcelWriter(arquivo, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Manutenção')
-                
-                # Ajusta largura das colunas
-                worksheet = writer.sheets['Manutenção']
-                for i, col in enumerate(df.columns):
-                    max_len = max(
-                        df[col].astype(str).apply(len).max(),
-                        len(str(col))
-                    ) + 2
-                    worksheet.column_dimensions[chr(65 + i)].width = min(max_len, 50)
-            
-            messagebox.showinfo("Sucesso", f"✅ Dados exportados para Excel:\n{arquivo}")
-            os.startfile(arquivo)
-        except Exception as e:
-            messagebox.showerror("Erro", f"Erro ao exportar Excel: {e}")
-    
-    
-    def _exportar_pdf(self, df, arquivo):
-        """Exporta para PDF"""
-        try:
-            from reportlab.lib import colors
-            from reportlab.lib.pagesizes import A4, landscape
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.lib.units import mm
-            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-            from reportlab.pdfbase import pdfmetrics
-            from reportlab.pdfbase.ttfonts import TTFont
-            
-            # Cria documento PDF em paisagem
-            doc = SimpleDocTemplate(
-                arquivo,
-                pagesize=landscape(A4),
-                rightMargin=10*mm,
-                leftMargin=10*mm,
-                topMargin=15*mm,
-                bottomMargin=15*mm
-            )
-            
-            elements = []
-            styles = getSampleStyleSheet()
-            
-            # Título
-            titulo_style = ParagraphStyle(
-                'Titulo',
-                parent=styles['Heading1'],
-                fontSize=16,
-                alignment=1,  # Centralizado
-                spaceAfter=20
-            )
-            elements.append(Paragraph("Relatório de Manutenção - ALS", titulo_style))
-            elements.append(Paragraph(f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles['Normal']))
-            elements.append(Spacer(1, 10*mm))
-            
-            # Prepara dados da tabela
-            colunas = list(df.columns)
-            dados_tabela = [colunas]  # Cabeçalho
-            
-            for _, row in df.iterrows():
-                linha = [str(row.get(col, ''))[:30] for col in colunas]  # Limita texto
-                dados_tabela.append(linha)
-            
-            # Calcula largura das colunas
-            largura_pagina = landscape(A4)[0] - 20*mm
-            num_colunas = len(colunas)
-            largura_coluna = largura_pagina / num_colunas
-            
-            # Cria tabela
-            tabela = Table(dados_tabela, repeatRows=1)
-            
-            # Estilo da tabela
-            estilo = TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2c3e50')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 8),
-                ('FONTSIZE', (0, 1), (-1, -1), 7),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                ('TOPPADDING', (0, 0), (-1, 0), 8),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.white),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
-            ])
-            tabela.setStyle(estilo)
-            
-            elements.append(tabela)
-            
-            # Rodapé com total
-            elements.append(Spacer(1, 10*mm))
-            elements.append(Paragraph(f"Total de registros: {len(df)}", styles['Normal']))
-            
-            # Gera PDF
-            doc.build(elements)
-            
-            messagebox.showinfo("Sucesso", f"✅ Dados exportados para PDF:\n{arquivo}")
-            os.startfile(arquivo)
-        except ImportError:
-            messagebox.showerror("Erro", "Biblioteca reportlab não instalada.\nExecute: pip install reportlab")
-        except Exception as e:
-            messagebox.showerror("Erro", f"Erro ao exportar PDF: {e}")
-    
-    
-    def _exportar_word(self, df, arquivo):
-        """Exporta para Word"""
-        try:
-            from docx import Document
-            from docx.shared import Inches, Pt, Cm
-            from docx.enum.table import WD_TABLE_ALIGNMENT
-            from docx.enum.text import WD_ALIGN_PARAGRAPH
-            from docx.oxml.ns import nsdecls
-            from docx.oxml import parse_xml
-            
-            # Cria documento
-            doc = Document()
-            
-            # Configura página paisagem
-            section = doc.sections[0]
-            section.page_width, section.page_height = section.page_height, section.page_width
-            section.left_margin = Cm(1)
-            section.right_margin = Cm(1)
-            
-            # Título
-            titulo = doc.add_heading('Relatório de Manutenção - ALS', 0)
-            titulo.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            
-            # Data
-            data_para = doc.add_paragraph(f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
-            data_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            
-            doc.add_paragraph()  # Espaço
-            
-            # Cria tabela
-            colunas = list(df.columns)
-            tabela = doc.add_table(rows=1, cols=len(colunas))
-            tabela.style = 'Table Grid'
-            tabela.alignment = WD_TABLE_ALIGNMENT.CENTER
-            
-            # Cabeçalho
-            cabecalho = tabela.rows[0].cells
-            for i, col in enumerate(colunas):
-                cabecalho[i].text = col
-                # Cor de fundo azul escuro
-                shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="2c3e50"/>')
-                cabecalho[i]._tc.get_or_add_tcPr().append(shading)
-                # Texto branco e negrito
-                run = cabecalho[i].paragraphs[0].runs[0]
-                run.bold = True
-                run.font.size = Pt(9)
-            
-            # Dados
-            for _, row in df.iterrows():
-                linha_tabela = tabela.add_row().cells
-                for i, col in enumerate(colunas):
-                    valor = str(row.get(col, ''))[:50]  # Limita texto
-                    linha_tabela[i].text = valor
-                    linha_tabela[i].paragraphs[0].runs[0].font.size = Pt(8)
-            
-            # Total
-            doc.add_paragraph()
-            doc.add_paragraph(f"Total de registros: {len(df)}")
-            
-            # Salva documento
-            doc.save(arquivo)
-            
-            messagebox.showinfo("Sucesso", f"✅ Dados exportados para Word:\n{arquivo}")
-            os.startfile(arquivo)
-        except ImportError:
-            messagebox.showerror("Erro", "Biblioteca python-docx não instalada.\nExecute: pip install python-docx")
-        except Exception as e:
-            messagebox.showerror("Erro", f"Erro ao exportar Word: {e}")
-    
-    
-    def exportar_excel(self):
-        """Exporta dados atuais para Excel (mantido para compatibilidade)"""
-        self.exportar_dados()
-    
-    
+        from src.views.modal_exportar import ModalExportar
+        from src.services.export_service import ExportService
+        ModalExportar(self.root, self.db, self.tree, ExportService)
+
     def importar_dados(self):
         """Importa dados de arquivo Excel para o banco SQLite"""
         # Janela de opções
@@ -2411,7 +1136,7 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                 progress_win.update()
                 
                 # Importa dados
-                cursor = self.db.conn.cursor()
+                cursor = self.db.model.conn.cursor()
                 contador = 0
                 atualizados = 0
                 erros = 0
@@ -2422,7 +1147,7 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                     progress_win.update()
                     cursor.execute("DELETE FROM manutencoes")
                     cursor.execute("DELETE FROM notas")
-                    self.db.conn.commit()
+                    self.db.model.conn.commit()
                 
                 for idx, row in df_excel.iterrows():
                     try:
@@ -2568,7 +1293,7 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                 
                 destinos_novos = cursor.rowcount
                 
-                self.db.conn.commit()
+                self.db.model.conn.commit()
                 
                 progress_win.destroy()
                 
@@ -2614,7 +1339,7 @@ Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                 # Faz rollback se houver erro
                 if 'cursor' in locals():
                     try:
-                        self.db.conn.rollback()
+                        self.db.model.conn.rollback()
                     except:
                         pass
                 

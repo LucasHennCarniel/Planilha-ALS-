@@ -122,6 +122,7 @@ pyinstaller --noconfirm ^
     --hidden-import "reportlab" ^
     --hidden-import "PIL" ^
     --hidden-import "pandas" ^
+    --hidden-import "tkcalendar" ^
     --log-level WARN ^
     src/main.py
 
@@ -334,10 +335,10 @@ if exist "src\main.py" (
     echo   ❌ src\main.py NÃO encontrado (CRÍTICO!)
 )
 
-if exist "src\database.py" (
-    echo   ✅ src\database.py encontrado
+if exist "src\models\manutencao_model.py" (
+    echo   ✅ src\models\manutencao_model.py encontrado
 ) else (
-    echo   ⚠️  src\database.py não encontrado
+    echo   ⚠️  src\models\manutencao_model.py não encontrado
 )
 
 if exist "img\logo ALS.png" (
