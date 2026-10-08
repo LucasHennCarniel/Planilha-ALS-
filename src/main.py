@@ -776,40 +776,46 @@ class SistemaManutencao:
     
     
     def excluir_registro(self):
-        """
-        Exclui registro selecionado
-        """
+        """Exclui o registro selecionado."""
         selecao = self.tree.selection()
         if not selecao:
             messagebox.showwarning("Aviso", "Selecione um registro para excluir")
             return
-        
+            
         if len(selecao) > 1:
-            messagebox.showinfo("Dica", "Você selecionou múltiplos registros.\n\nUse o botão '🗑️❌ Excluir Múltiplos' para excluir vários de uma vez.")
+            messagebox.showinfo("Dica", "Você selecionou múltiplos registros.
+
+Use o botão '🗑️ Excluir Múltiplos' para excluir vários de uma vez.")
             return
-        
-        # Pega o primeiro item selecionado
+            
         item = self.tree.item(selecao[0])
         indice = item['tags'][0] if item['tags'] else None
         
         if indice is None:
             messagebox.showwarning("Aviso", "Não foi possível identificar o registro")
             return
-        
+            
         resposta = messagebox.askyesno(
             "Confirmar Exclusão",
             "Tem certeza que deseja excluir este registro?"
         )
         
         if resposta:
-            if self.db.excluir_registro(indice):
-                if self.db.salvar_dados():
+            try:
+                # indice é o índice do dataframe Pandas
+                registro = self.db.df.iloc[int(indice)].to_dict()
+                id_registro = registro.get('ID')
+                
+                sucesso = self.db.excluir_registro(id_registro)
+                if sucesso:
                     self.atualizar_tabela()
                     self.atualizar_estatisticas()
                     self.indice_selecionado = None
                     messagebox.showinfo("Sucesso", "Registro excluído com sucesso!")
                 else:
-                    messagebox.showerror("Erro", "Registro excluído mas não foi possível salvar no banco de dados")
+                    messagebox.showerror("Erro", "Erro ao excluir no banco de dados")
+            except Exception as e:
+                messagebox.showerror("Erro", f"Ocorreu um erro: {e}")
     
     
     def excluir_multiplos(self):
